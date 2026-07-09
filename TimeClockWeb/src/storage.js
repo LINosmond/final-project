@@ -32,6 +32,13 @@ const storage = {
     return data.value == null ? null : { value: data.value };
   },
 
+  // 一次讀取多個共用資料，把原本的 N 次 Apps Script 往返縮成一次，大幅加快進站載入。
+  // 回傳格式為 { key: 原始字串或 null }。
+  async getAll(keys) {
+    const data = await callApi("getAll", { keys });
+    return data.values || {};
+  },
+
   async set(key, value, shared) {
     if (!shared) {
       window.localStorage.setItem(LOCAL_PREFIX + key, value);

@@ -76,6 +76,22 @@ function doPost(e) {
     try {
       var sheet = getSheet_();
 
+      if (action === "getAll") {
+        // 一次把整張表讀進記憶體，回傳前端要求的多個 key，
+        // 讓進站只需一次請求（而不是每個 key 各打一次），大幅縮短載入時間。
+        var allData = sheet.getDataRange().getValues();
+        var map = {};
+        for (var r = 1; r < allData.length; r++) {
+          map[allData[r][0]] = String(allData[r][1]);
+        }
+        var wantKeys = body.keys || [];
+        var values = {};
+        for (var k = 0; k < wantKeys.length; k++) {
+          values[wantKeys[k]] = map.hasOwnProperty(wantKeys[k]) ? map[wantKeys[k]] : null;
+        }
+        return jsonResponse_({ ok: true, values: values });
+      }
+
       if (action === "appendPunch") {
         var punches = JSON.parse(readValue_(sheet, "punches") || "[]");
         punches.push(body.entry);

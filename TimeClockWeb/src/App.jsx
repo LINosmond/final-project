@@ -340,44 +340,62 @@ export default function TimeClockApp() {
   }, []);
 
   const loadAll = useCallback(async () => {
-    // 讀取失敗時不要把現有資料清空（避免暫時性網路錯誤把畫面「登出」）
+    const KEYS = ["employees", "punches", "holidays", "companyLocation", "otMultiplier"];
+
+    // 先試著用 getAll 一次抓齊所有資料（只打一次 Apps Script，載入快很多）。
+    // 若後端還是舊版（不認得 getAll）或發生網路錯誤，raw 會維持 null，改走下方逐一讀取的相容路徑。
+    let raw = null;
     try {
-      const empRes = await window.storage.get("employees", true);
-      setEmployees(empRes ? JSON.parse(empRes.value) : []);
+      const values = await window.storage.getAll(KEYS);
+      raw = {};
+      KEYS.forEach((k) => { raw[k] = values[k] != null ? values[k] : null; });
     } catch (e) {
-      setEmployees((prev) => (prev === null ? [] : prev));
+      raw = null;
     }
-    try {
-      const punRes = await window.storage.get("punches", true);
-      setPunches(punRes ? JSON.parse(punRes.value) : []);
-    } catch (e) {
-      setPunches((prev) => (prev === null ? [] : prev));
+
+    // 相容路徑：逐一讀取。讀取失敗的 key 標記為 undefined，代表「保留現有資料、不要覆寫」，
+    // 避免暫時性網路錯誤把畫面「登出」或清空。
+    if (!raw) {
+      raw = {};
+      for (const k of KEYS) {
+        try {
+          const res = await window.storage.get(k, true);
+          raw[k] = res ? res.value : null;
+        } catch (e) {
+          raw[k] = undefined;
+        }
+      }
     }
-    try {
-      const holRes = await window.storage.get("holidays", true);
-      let parsed = holRes ? JSON.parse(holRes.value) : {};
-      if (Array.isArray(parsed)) {
+
+    // undefined＝讀取失敗保留現狀；null＝尚無資料，套用預設值；其餘＝解析 JSON
+    const parse = (value, fallback) => {
+      if (value === undefined) return undefined;
+      if (value == null) return fallback;
+      try { return JSON.parse(value); } catch (e) { return fallback; }
+    };
+
+    const emp = parse(raw.employees, []);
+    if (emp !== undefined) setEmployees(emp);
+
+    const pun = parse(raw.punches, []);
+    if (pun !== undefined) setPunches(pun);
+
+    let hol = parse(raw.holidays, {});
+    if (hol !== undefined) {
+      if (Array.isArray(hol)) {
         // 相容舊版資料格式（純日期陣列）：轉換成覆寫表
         const migrated = {};
-        parsed.forEach((d) => { migrated[d] = true; });
-        parsed = migrated;
+        hol.forEach((d) => { migrated[d] = true; });
+        hol = migrated;
       }
-      setHolidays(parsed);
-    } catch (e) {
-      setHolidays((prev) => (prev === null ? {} : prev));
+      setHolidays(hol);
     }
-    try {
-      const locRes = await window.storage.get("companyLocation", true);
-      setCompanyLocation(locRes ? JSON.parse(locRes.value) : null);
-    } catch (e) {
-      // 沒有設定地點限制屬於正常情況，維持現狀（null＝不限制）
-    }
-    try {
-      const otRes = await window.storage.get("otMultiplier", true);
-      setOtMultiplier(otRes && otRes.value != null ? JSON.parse(otRes.value) : 2);
-    } catch (e) {
-      setOtMultiplier((prev) => (prev === null ? 2 : prev));
-    }
+
+    const loc = parse(raw.companyLocation, null);
+    if (loc !== undefined) setCompanyLocation(loc);
+
+    const ot = parse(raw.otMultiplier, 2);
+    if (ot !== undefined) setOtMultiplier(ot);
   }, []);
 
   useEffect(() => {
