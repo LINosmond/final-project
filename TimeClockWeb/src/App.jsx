@@ -1029,9 +1029,10 @@ function computeMonthRows(emp, punches, year, month, multiplier, overrides) {
   return out;
 }
 
-// 把工時（分鐘）換成十進位小時，方便薪資試算（例如 8.5 小時）
-function minToDecimalHours(min) {
-  return (min / 60).toFixed(2);
+// 把工時（分鐘）換成以「小時」為單位的數字，去掉多餘的小數尾數：
+// 480 分 -> "8"、510 分 -> "8.5"、其餘（含倍率計算）最多保留兩位小數（例如 "1.34"）
+function minToHours(min) {
+  return String(Math.round((min / 60) * 100) / 100);
 }
 
 // CSV 欄位跳脫：含逗號、雙引號或換行時用雙引號包起來
@@ -1228,41 +1229,40 @@ function AdminView({ employees, punches, holidays, canEdit, onAddEmployee, onRem
   const monthRaw = rows.reduce((s, r) => s + r.subtotalMin, 0);
   const monthBonus = monthSubtotal - monthRaw;
 
-  // 匯出目前這位員工的當月考勤成 CSV（可用 Excel 開啟做薪資計算）
+  // 匯出目前這位員工的當月考勤成 CSV（工時以「小時」為單位，半小時顯示為 0.5，可用 Excel 開啟做薪資計算）
   const exportEmployeeCsv = () => {
     if (!emp) return;
-    const header = ["日期", "星期", "上午上班", "上午下班", "下午上班", "下午下班", "原始工時", "假日", "計算後工時", "工時(小時)"];
+    const header = ["日期", "星期", "上午上班", "上午下班", "下午上班", "下午下班", "原始工時(小時)", "假日", "計算後工時(小時)"];
     const body = rows.map((r) => {
       const [y, m, d] = r.dateKey.split("-").map(Number);
       const w = "週" + WEEKDAY_SHORT[new Date(y, m - 1, d).getDay()];
       return [
         `${month}/${r.day}`, w,
         fmtCell(r.am.inTs), fmtCell(r.am.outTs), fmtCell(r.pm.inTs), fmtCell(r.pm.outTs),
-        r.subtotalMin ? fmtSubtotal(r.subtotalMin) : "",
+        r.subtotalMin ? minToHours(r.subtotalMin) : "",
         r.isHoliday ? "是" : "",
-        r.displayMin ? fmtSubtotal(r.displayMin) : "",
-        r.displayMin ? minToDecimalHours(r.displayMin) : "",
+        r.displayMin ? minToHours(r.displayMin) : "",
       ];
     });
-    const totalRow = ["本月小計", "", "", "", "", "", fmtSubtotal(monthRaw) || "0:00", "", fmtSubtotal(monthSubtotal) || "0:00", minToDecimalHours(monthSubtotal)];
+    const totalRow = ["本月小計", "", "", "", "", "", minToHours(monthRaw), "", minToHours(monthSubtotal)];
     downloadCsv(
       `考勤_${emp.name}_${year}-${pad2(month)}.csv`,
-      [[`${emp.name}　${year}年${month}月　考勤卡`], [], header, ...body, [], totalRow]
+      [[`${emp.name}　${year}年${month}月　考勤卡（單位：小時）`], [], header, ...body, [], totalRow]
     );
   };
 
-  // 匯出全體員工的當月工時彙總成 CSV（一次看完所有人，方便薪資結算）
+  // 匯出全體員工的當月工時彙總成 CSV（工時以「小時」為單位，一次看完所有人，方便薪資結算）
   const exportAllSummaryCsv = () => {
-    const header = ["姓名", "原始工時", "加乘", "本月合計", "合計(小時)"];
+    const header = ["姓名", "原始工時(小時)", "加乘(小時)", "本月合計(小時)"];
     const body = employees.map((e) => {
       const rws = computeMonthRows(e, punches, year, month, multiplier, overrides);
       const sub = rws.reduce((s, r) => s + r.displayMin, 0);
       const raw = rws.reduce((s, r) => s + r.subtotalMin, 0);
-      return [e.name, fmtSubtotal(raw) || "0:00", fmtSubtotal(sub - raw) || "0:00", fmtSubtotal(sub) || "0:00", minToDecimalHours(sub)];
+      return [e.name, minToHours(raw), minToHours(sub - raw), minToHours(sub)];
     });
     downloadCsv(
       `月度彙總_${year}-${pad2(month)}.csv`,
-      [[`${year}年${month}月　全員工時彙總`], [], header, ...body]
+      [[`${year}年${month}月　全員工時彙總（單位：小時）`], [], header, ...body]
     );
   };
 
