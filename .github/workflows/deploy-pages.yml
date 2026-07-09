@@ -1,0 +1,65 @@
+name: Deploy TimeClockWeb to GitHub Pages
+
+on:
+  push:
+    branches: [claude/continue-production-us0est]
+    paths:
+      - "TimeClockWeb/**"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一時間只跑一個部署，新的推送會取消還在跑的舊部署
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: TimeClockWeb
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: TimeClockWeb/package-lock.json
+
+      - run: npm ci
+
+      - name: Build
+        env:
+          # GitHub Pages 專案頁的子路徑
+          VITE_BASE: /final-project/
+          # 純前端靜態網站：這兩個值會被打包進公開的 JS，屬於設計上就會公開的資訊
+          # （API_KEY 只是擋隨機掃描，不是真正的身分驗證，詳見 TimeClockWeb/README.md）
+          VITE_SHEETS_API_URL: https://script.google.com/macros/s/AKfycbyrWjW4DA10Wq5SzPeRzsPNdUX_y851zc1U-GIT2AJUhg2s9l2cydPBpGsWknbjok6o/exec
+          VITE_SHEETS_API_KEY: lin-632412852-han
+        run: npm run build
+
+      - uses: actions/configure-pages@v5
+        with:
+          # 若 repo 尚未啟用 Pages，這裡會自動幫忙啟用（來源設為 GitHub Actions）
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: TimeClockWeb/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
