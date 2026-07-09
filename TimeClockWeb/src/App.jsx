@@ -1367,20 +1367,21 @@ function AdminView({ employees, punches, holidays, canEdit, onAddEmployee, onRem
         )
       )}
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-        <button
-          onClick={exportEmployeeCsv}
-          disabled={!emp}
-          style={{
-            flex: 1, minWidth: 150, padding: "9px 0", borderRadius: 8,
-            border: `1px solid ${COLORS.brassDim}`, background: "none",
-            color: COLORS.brass, fontSize: 13, fontWeight: 600,
-            cursor: emp ? "pointer" : "default", opacity: emp ? 1 : 0.5,
-          }}
-        >
-          ⤓ 匯出本月考勤 CSV
-        </button>
-        {canEdit && (
+      {/* CSV 匯出僅限管理員；員工端（管理紀錄頁）不提供下載功能 */}
+      {canEdit && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+          <button
+            onClick={exportEmployeeCsv}
+            disabled={!emp}
+            style={{
+              flex: 1, minWidth: 150, padding: "9px 0", borderRadius: 8,
+              border: `1px solid ${COLORS.brassDim}`, background: "none",
+              color: COLORS.brass, fontSize: 13, fontWeight: 600,
+              cursor: emp ? "pointer" : "default", opacity: emp ? 1 : 0.5,
+            }}
+          >
+            ⤓ 匯出本月考勤 CSV
+          </button>
           <button
             onClick={exportAllSummaryCsv}
             style={{
@@ -1391,8 +1392,8 @@ function AdminView({ employees, punches, holidays, canEdit, onAddEmployee, onRem
           >
             ⤓ 匯出全員月度彙總 CSV
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       <div style={{
         background: COLORS.cardPaper,
