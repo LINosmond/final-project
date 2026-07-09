@@ -977,6 +977,67 @@ function fmtSubtotal(min) {
   return m ? `${h}:${pad2(m)}` : `${h}:00`;
 }
 
+// 供畫面表格與 CSV 匯出共用：判斷某一天是否為假日（覆寫表優先於自動偵測）
+function resolveHolidayFor(dateKey, overrides) {
+  const auto = isAutoHoliday(dateKey);
+  const override = (overrides || {})[dateKey];
+  return { isHoliday: override !== undefined ? override : auto, autoDetected: auto };
+}
+
+// 算出某位員工某個月每一天的打卡與工時（含假日 ×2、平日超時倍率），
+// 抽成獨立函式讓「畫面上的考勤卡」與「CSV 匯出／全員彙總」共用同一套計算邏輯
+function computeMonthRows(emp, punches, year, month, multiplier, overrides) {
+  if (!emp) return [];
+  const total = daysInMonth(year, month);
+  const out = [];
+  for (let day = 1; day <= total; day++) {
+    const key = `${year}-${pad2(month)}-${pad2(day)}`;
+    const dayPunches = punches.filter(
+      (p) => p.employeeId === emp.id && fmtDateKey(new Date(p.ts)) === key
+    );
+    const cell = buildDayCell(dayPunches);
+    const { isHoliday, autoDetected } = resolveHolidayFor(key, overrides);
+    let displayMin, otMin;
+    if (isHoliday) {
+      displayMin = cell.subtotalMin * 2;
+      otMin = 0;
+    } else {
+      const baseMin = Math.min(cell.subtotalMin, 480);
+      otMin = Math.max(cell.subtotalMin - 480, 0);
+      displayMin = baseMin + otMin * multiplier;
+    }
+    out.push({ day, dateKey: key, ...cell, isHoliday, autoDetected, displayMin, otMin });
+  }
+  return out;
+}
+
+// 把工時（分鐘）換成十進位小時，方便薪資試算（例如 8.5 小時）
+function minToDecimalHours(min) {
+  return (min / 60).toFixed(2);
+}
+
+// CSV 欄位跳脫：含逗號、雙引號或換行時用雙引號包起來
+function escapeCsv(v) {
+  const s = String(v == null ? "" : v);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// 把二維陣列組成 CSV 並觸發下載；開頭加上 UTF-8 BOM，確保 Excel 正確顯示中文
+function downloadCsv(filename, rows) {
+  const csv = rows.map((r) => r.map(escapeCsv).join(",")).join("\r\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+const WEEKDAY_SHORT = ["日", "一", "二", "三", "四", "五", "六"];
+
 function optionRowStyle(active) {
   return {
     padding: "7px 10px", fontSize: 12, cursor: "pointer",
@@ -1124,11 +1185,6 @@ function AdminView({ employees, punches, holidays, canEdit, onAddEmployee, onRem
   const multiplier = otMultiplier ?? 2;
   const today = new Date();
   const overrides = holidays || {};
-  const resolveHoliday = (dateKey) => {
-    const auto = isAutoHoliday(dateKey);
-    const override = overrides[dateKey];
-    return { isHoliday: override !== undefined ? override : auto, autoDetected: auto };
-  };
   const [employeeId, setEmployeeId] = useState(employees[0]?.id || "");
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
@@ -1145,35 +1201,52 @@ function AdminView({ employees, punches, holidays, canEdit, onAddEmployee, onRem
   const emp = employees.find((e) => e.id === employeeId);
   const total = daysInMonth(year, month);
 
-  const rows = useMemo(() => {
-    if (!emp) return [];
-    const out = [];
-    for (let day = 1; day <= total; day++) {
-      const key = `${year}-${pad2(month)}-${pad2(day)}`;
-      const dayPunches = punches.filter(
-        (p) => p.employeeId === emp.id && fmtDateKey(new Date(p.ts)) === key
-      );
-      const cell = buildDayCell(dayPunches);
-      const { isHoliday, autoDetected } = resolveHoliday(key);
-      let displayMin, otMin;
-      if (isHoliday) {
-        // 國定假日：全天工時以雙倍計算
-        displayMin = cell.subtotalMin * 2;
-        otMin = 0;
-      } else {
-        // 平日：超過 8 小時（480 分鐘）的部分以可調整倍率計算
-        const baseMin = Math.min(cell.subtotalMin, 480);
-        otMin = Math.max(cell.subtotalMin - 480, 0);
-        displayMin = baseMin + otMin * multiplier;
-      }
-      out.push({ day, dateKey: key, ...cell, isHoliday, autoDetected, displayMin, otMin });
-    }
-    return out;
-  }, [emp, punches, year, month, total, holidays, multiplier]);
+  const rows = useMemo(
+    () => computeMonthRows(emp, punches, year, month, multiplier, overrides),
+    [emp, punches, year, month, multiplier, holidays]
+  );
 
   const monthSubtotal = rows.reduce((s, r) => s + r.displayMin, 0);
   const monthRaw = rows.reduce((s, r) => s + r.subtotalMin, 0);
   const monthBonus = monthSubtotal - monthRaw;
+
+  // 匯出目前這位員工的當月考勤成 CSV（可用 Excel 開啟做薪資計算）
+  const exportEmployeeCsv = () => {
+    if (!emp) return;
+    const header = ["日期", "星期", "上午上班", "上午下班", "下午上班", "下午下班", "原始工時", "假日", "計算後工時", "工時(小時)"];
+    const body = rows.map((r) => {
+      const [y, m, d] = r.dateKey.split("-").map(Number);
+      const w = "週" + WEEKDAY_SHORT[new Date(y, m - 1, d).getDay()];
+      return [
+        `${month}/${r.day}`, w,
+        fmtCell(r.am.inTs), fmtCell(r.am.outTs), fmtCell(r.pm.inTs), fmtCell(r.pm.outTs),
+        r.subtotalMin ? fmtSubtotal(r.subtotalMin) : "",
+        r.isHoliday ? "是" : "",
+        r.displayMin ? fmtSubtotal(r.displayMin) : "",
+        r.displayMin ? minToDecimalHours(r.displayMin) : "",
+      ];
+    });
+    const totalRow = ["本月小計", "", "", "", "", "", fmtSubtotal(monthRaw) || "0:00", "", fmtSubtotal(monthSubtotal) || "0:00", minToDecimalHours(monthSubtotal)];
+    downloadCsv(
+      `考勤_${emp.name}_${year}-${pad2(month)}.csv`,
+      [[`${emp.name}　${year}年${month}月　考勤卡`], [], header, ...body, [], totalRow]
+    );
+  };
+
+  // 匯出全體員工的當月工時彙總成 CSV（一次看完所有人，方便薪資結算）
+  const exportAllSummaryCsv = () => {
+    const header = ["姓名", "原始工時", "加乘", "本月合計", "合計(小時)"];
+    const body = employees.map((e) => {
+      const rws = computeMonthRows(e, punches, year, month, multiplier, overrides);
+      const sub = rws.reduce((s, r) => s + r.displayMin, 0);
+      const raw = rws.reduce((s, r) => s + r.subtotalMin, 0);
+      return [e.name, fmtSubtotal(raw) || "0:00", fmtSubtotal(sub - raw) || "0:00", fmtSubtotal(sub) || "0:00", minToDecimalHours(sub)];
+    });
+    downloadCsv(
+      `月度彙總_${year}-${pad2(month)}.csv`,
+      [[`${year}年${month}月　全員工時彙總`], [], header, ...body]
+    );
+  };
 
   const submitAddEmployee = async () => {
     if (!newName.trim() || !newPhone.trim()) return;
@@ -1293,6 +1366,33 @@ function AdminView({ employees, punches, holidays, canEdit, onAddEmployee, onRem
           </div>
         )
       )}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        <button
+          onClick={exportEmployeeCsv}
+          disabled={!emp}
+          style={{
+            flex: 1, minWidth: 150, padding: "9px 0", borderRadius: 8,
+            border: `1px solid ${COLORS.brassDim}`, background: "none",
+            color: COLORS.brass, fontSize: 13, fontWeight: 600,
+            cursor: emp ? "pointer" : "default", opacity: emp ? 1 : 0.5,
+          }}
+        >
+          ⤓ 匯出本月考勤 CSV
+        </button>
+        {canEdit && (
+          <button
+            onClick={exportAllSummaryCsv}
+            style={{
+              flex: 1, minWidth: 150, padding: "9px 0", borderRadius: 8,
+              border: `1px solid ${COLORS.brassDim}`, background: "none",
+              color: COLORS.brass, fontSize: 13, fontWeight: 600, cursor: "pointer",
+            }}
+          >
+            ⤓ 匯出全員月度彙總 CSV
+          </button>
+        )}
+      </div>
 
       <div style={{
         background: COLORS.cardPaper,
