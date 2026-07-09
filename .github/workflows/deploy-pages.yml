@@ -2,7 +2,7 @@ name: Deploy TimeClockWeb to GitHub Pages
 
 on:
   push:
-    branches: [claude/continue-production-us0est]
+    branches: [master, claude/continue-production-us0est]
     paths:
       - "TimeClockWeb/**"
       - ".github/workflows/deploy-pages.yml"
