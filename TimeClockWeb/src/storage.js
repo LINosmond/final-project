@@ -68,6 +68,13 @@ const storage = {
     const data = await callApi("appendPunch", { entry });
     return data.punches;
   },
+
+  // 管理員審核用的原子操作：decision 為 "approve"（通過）或 "reject"（拒絕移除）。
+  // 在伺服器端讀取整包員工清單再修改寫回，避免與其他人同時申請時互相覆蓋。
+  async reviewEmployee(id, decision) {
+    const data = await callApi("reviewEmployee", { id, decision });
+    return data.employees;
+  },
 };
 
 window.storage = storage;

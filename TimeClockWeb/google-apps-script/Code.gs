@@ -113,10 +113,36 @@ function doPost(e) {
         if (existing) {
           return jsonResponse_({ ok: true, created: false, employee: existing, employees: employees });
         }
-        var emp = { id: Utilities.getUuid(), name: name, phone: phone };
+        // 新申請的帳號預設為「待審核（pending）」，需管理員通過後才會變成 active、才能打卡並進入名冊
+        var emp = { id: Utilities.getUuid(), name: name, phone: phone, status: "pending" };
         employees.push(emp);
         writeValue_(sheet, "employees", JSON.stringify(employees));
         return jsonResponse_({ ok: true, created: true, employee: emp, employees: employees });
+      }
+
+      // 管理員審核：approve = 通過（狀態改 active）；reject = 拒絕（從名冊移除）。
+      // 在同一把鎖內讀取整包 employees 再修改寫回，避免與其他人幾乎同時申請時互相覆蓋。
+      if (action === "reviewEmployee") {
+        var reviewId = body.id;
+        var decision = body.decision;
+        if (!reviewId || (decision !== "approve" && decision !== "reject")) {
+          return jsonResponse_({ ok: false, error: "missing id or invalid decision" });
+        }
+        var emps = JSON.parse(readValue_(sheet, "employees") || "[]");
+        var kept = [];
+        for (var j = 0; j < emps.length; j++) {
+          if (emps[j].id === reviewId) {
+            if (decision === "approve") {
+              emps[j].status = "active";
+              kept.push(emps[j]);
+            }
+            // reject：不 push，等於從名冊移除
+          } else {
+            kept.push(emps[j]);
+          }
+        }
+        writeValue_(sheet, "employees", JSON.stringify(kept));
+        return jsonResponse_({ ok: true, employees: kept });
       }
 
       // 一般 key-value 動作（get / set / delete），供其他資料（員工清單管理、打卡紀錄管理、

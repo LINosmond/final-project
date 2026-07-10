@@ -312,6 +312,29 @@ function LoginView({ employees, onLogin, flash }) {
   );
 }
 
+// 待審核帳號登入後看到的畫面：不能打卡，等管理員通過後（靠輪詢重新載入）會自動切換成打卡畫面
+function PendingView({ emp }) {
+  return (
+    <div style={{ textAlign: "center", padding: "48px 20px" }}>
+      <div style={{ fontSize: 40, marginBottom: 12 }}>🕓</div>
+      <div style={{ fontSize: 18, fontWeight: 600, color: COLORS.text, marginBottom: 10 }}>
+        等待管理員審核
+      </div>
+      <div style={{ fontSize: 14, color: COLORS.textMuted, lineHeight: 1.7, maxWidth: 320, margin: "0 auto" }}>
+        {emp?.name ? <b style={{ color: COLORS.brass }}>{emp.name}</b> : "您"} 的帳號申請已送出。<br />
+        管理員審核通過後，就能開始打卡，這個畫面會自動切換，不用重新登入。
+      </div>
+      <div style={{
+        marginTop: 20, display: "inline-block",
+        background: COLORS.brassSoft, border: `1px solid ${COLORS.brassDim}`,
+        color: COLORS.brass, borderRadius: 8, padding: "6px 14px", fontSize: 12,
+      }}>
+        狀態：待審核
+      </div>
+    </div>
+  );
+}
+
 export default function TimeClockApp() {
   const [now, setNow] = useState(new Date());
   const [tab, setTab] = useState("punch");
@@ -525,8 +548,31 @@ export default function TimeClockApp() {
     setSessionId(emp.id);
     setSessionType("employee");
     await rememberSession(emp.id, "employee");
-    flash(result.created ? `已建立帳號，歡迎 ${name}` : `歡迎回來，${emp.name}`);
+    // 待審核帳號：登入後停在「等待審核」畫面（不能打卡），管理員通過後畫面會自動切換
+    if (emp.status === "pending") {
+      flash(result.created ? "已送出申請，請等待管理員審核通過" : "你的帳號正在等待管理員審核");
+    } else {
+      flash(result.created ? `已建立帳號，歡迎 ${name}` : `歡迎回來，${emp.name}`);
+    }
     return "ok";
+  };
+
+  const reviewEmployee = async (id, decision) => {
+    const target = (employees || []).find((e) => e.id === id);
+    setBusy(true);
+    try {
+      // 伺服器端原子審核，避免與其他人同時申請時互相覆蓋
+      const fresh = await window.storage.reviewEmployee(id, decision);
+      setEmployees(fresh);
+    } catch (e) {
+      // 後端若尚未支援 reviewEmployee，退回本地修改後整包寫回（仍可運作，但少了原子保護）
+      const next = decision === "approve"
+        ? (employees || []).map((e) => (e.id === id ? { ...e, status: "active" } : e))
+        : (employees || []).filter((e) => e.id !== id);
+      await saveEmployees(next);
+    }
+    setBusy(false);
+    flash(decision === "approve" ? `已通過「${target ? target.name : ""}」的申請` : `已拒絕「${target ? target.name : ""}」的申請`);
   };
 
   const handleLogout = async () => {
@@ -660,7 +706,8 @@ export default function TimeClockApp() {
     if (!p) return flash("請輸入手機號碼作為登入密碼", "error");
     if ((employees || []).some((e) => e.name === n)) return flash("這個姓名已經存在了", "error");
     setBusy(true);
-    await saveEmployees([...(employees || []), { id: uid(), name: n, phone: p }]);
+    // 管理員手動新增的帳號直接視為已審核（active），不需再經審核流程
+    await saveEmployees([...(employees || []), { id: uid(), name: n, phone: p, status: "active" }]);
     setBusy(false);
     flash(`已新增員工「${n}」`);
   };
@@ -759,6 +806,7 @@ export default function TimeClockApp() {
               onToggleHoliday={toggleHoliday}
               onExportBackup={exportBackup}
               onImportBackup={importBackup}
+              onReviewEmployee={reviewEmployee}
               companyLocation={companyLocation}
               onSaveLocation={saveCompanyLocation}
               onClearLocation={clearCompanyLocation}
@@ -766,6 +814,11 @@ export default function TimeClockApp() {
               onSaveOtMultiplier={saveOtMultiplier}
               busy={busy}
             />
+          </>
+        ) : sessionEmp && sessionEmp.status === "pending" ? (
+          <>
+            <Toast msg={toast} tone={toastTone} />
+            <PendingView emp={sessionEmp} />
           </>
         ) : (
           <>
@@ -1200,11 +1253,15 @@ function DayEditRow({ row, colCount, onSave, onClose, onToggleHoliday, busy }) {
   );
 }
 
-function AdminView({ employees, punches, holidays, canEdit, onAddEmployee, onRemoveEmployee, onUpdateDay, onToggleHoliday, onExportBackup, onImportBackup, companyLocation, onSaveLocation, onClearLocation, otMultiplier, onSaveOtMultiplier, busy }) {
+function AdminView({ employees, punches, holidays, canEdit, onAddEmployee, onRemoveEmployee, onUpdateDay, onToggleHoliday, onExportBackup, onImportBackup, onReviewEmployee, companyLocation, onSaveLocation, onClearLocation, otMultiplier, onSaveOtMultiplier, busy }) {
   const multiplier = otMultiplier ?? 2;
   const today = new Date();
   const overrides = holidays || {};
-  const [employeeId, setEmployeeId] = useState(employees[0]?.id || "");
+  // 只有「已審核（active）」的員工才進入考勤名冊；待審核（pending）另外列在審核區。
+  // 沒有 status 欄位的舊資料一律視為 active，維持相容。
+  const activeEmployees = employees.filter((e) => e.status !== "pending");
+  const pendingEmployees = employees.filter((e) => e.status === "pending");
+  const [employeeId, setEmployeeId] = useState(activeEmployees[0]?.id || "");
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [editingDay, setEditingDay] = useState(null);
@@ -1214,10 +1271,13 @@ function AdminView({ employees, punches, holidays, canEdit, onAddEmployee, onRem
   const [newPhone, setNewPhone] = useState("");
 
   useEffect(() => {
-    if (!employeeId && employees.length) setEmployeeId(employees[0].id);
+    // 目前選到的員工若不在 active 名冊中（例如剛被移除），自動選回第一位
+    if (!activeEmployees.some((e) => e.id === employeeId)) {
+      setEmployeeId(activeEmployees[0]?.id || "");
+    }
   }, [employees, employeeId]);
 
-  const emp = employees.find((e) => e.id === employeeId);
+  const emp = activeEmployees.find((e) => e.id === employeeId);
   const total = daysInMonth(year, month);
 
   const rows = useMemo(
@@ -1254,7 +1314,7 @@ function AdminView({ employees, punches, holidays, canEdit, onAddEmployee, onRem
   // 匯出全體員工的當月工時彙總成 CSV（工時以「小時」為單位，一次看完所有人，方便薪資結算）
   const exportAllSummaryCsv = () => {
     const header = ["姓名", "原始工時(小時)", "加乘(小時)", "本月合計(小時)"];
-    const body = employees.map((e) => {
+    const body = activeEmployees.map((e) => {
       const rws = computeMonthRows(e, punches, year, month, multiplier, overrides);
       const sub = rws.reduce((s, r) => s + r.displayMin, 0);
       const raw = rws.reduce((s, r) => s + r.subtotalMin, 0);
@@ -1274,11 +1334,12 @@ function AdminView({ employees, punches, holidays, canEdit, onAddEmployee, onRem
     setShowAddEmp(false);
   };
 
-  if (!employees.length) {
+  if (!activeEmployees.length) {
     return (
       <div>
         {canEdit && (
           <>
+            <PendingApprovalPanel pending={pendingEmployees} onReview={onReviewEmployee} busy={busy} />
             <LocationPanel companyLocation={companyLocation} onSave={onSaveLocation} onClear={onClearLocation} busy={busy} />
             <OvertimeRatePanel multiplier={multiplier} onSave={onSaveOtMultiplier} busy={busy} />
             <BackupPanel onExport={onExportBackup} onImport={onImportBackup} busy={busy} />
@@ -1301,6 +1362,7 @@ function AdminView({ employees, punches, holidays, canEdit, onAddEmployee, onRem
     <div>
       {canEdit && (
         <>
+          <PendingApprovalPanel pending={pendingEmployees} onReview={onReviewEmployee} busy={busy} />
           <LocationPanel companyLocation={companyLocation} onSave={onSaveLocation} onClear={onClearLocation} busy={busy} />
           <OvertimeRatePanel multiplier={multiplier} onSave={onSaveOtMultiplier} busy={busy} />
           <BackupPanel onExport={onExportBackup} onImport={onImportBackup} busy={busy} />
@@ -1323,7 +1385,7 @@ function AdminView({ employees, punches, holidays, canEdit, onAddEmployee, onRem
             color: COLORS.text, fontSize: 13, outline: "none",
           }}
         >
-          {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+          {activeEmployees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
         </select>
         <select
           value={month}
@@ -1802,6 +1864,64 @@ function BackupPanel({ onExport, onImport, busy }) {
           取消還原
         </button>
       )}
+    </div>
+  );
+}
+
+// 管理員審核區：列出待審核的新申請帳號，可逐一「通過」或「拒絕」
+function PendingApprovalPanel({ pending, onReview, busy }) {
+  if (!pending || pending.length === 0) return null;
+  return (
+    <div style={{
+      background: COLORS.panel, border: `1px solid ${COLORS.brassDim}`, borderRadius: 10,
+      padding: 12, marginBottom: 14,
+    }}>
+      <div style={{ fontSize: 12, color: COLORS.brass, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+        <span>待審核申請</span>
+        <span style={{
+          background: COLORS.brassSoft, color: COLORS.brass, borderRadius: 10,
+          padding: "1px 8px", fontSize: 11, fontWeight: 700,
+        }}>{pending.length}</span>
+      </div>
+      <div style={{ fontSize: 11, color: COLORS.textFaint, marginBottom: 10 }}>
+        通過後才會加入打卡名冊並可開始打卡；拒絕則會移除該申請。
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {pending.map((e) => (
+          <div key={e.id} style={{
+            display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+            background: COLORS.panelRaised, border: `1px solid ${COLORS.border}`,
+            borderRadius: 8, padding: "8px 10px",
+          }}>
+            <div style={{ flex: 1, minWidth: 120 }}>
+              <div style={{ fontSize: 14, color: COLORS.text, fontWeight: 600 }}>{e.name}</div>
+              <div style={{ fontSize: 11, color: COLORS.textFaint }}>手機：{e.phone}</div>
+            </div>
+            <button
+              onClick={() => onReview(e.id, "approve")}
+              disabled={busy}
+              style={{
+                padding: "7px 14px", borderRadius: 8, border: "none",
+                background: COLORS.green, color: "#fff", fontSize: 13, fontWeight: 600,
+                cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1,
+              }}
+            >
+              通過
+            </button>
+            <button
+              onClick={() => onReview(e.id, "reject")}
+              disabled={busy}
+              style={{
+                padding: "7px 12px", borderRadius: 8, border: `1px solid ${COLORS.border}`,
+                background: "none", color: COLORS.textMuted, fontSize: 13,
+                cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1,
+              }}
+            >
+              拒絕
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
