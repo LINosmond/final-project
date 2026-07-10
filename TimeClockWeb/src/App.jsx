@@ -1420,6 +1420,7 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
             newPhone={newPhone} setNewPhone={setNewPhone}
             submitAddEmployee={submitAddEmployee} busy={busy}
           />
+          <AccountListPanel employees={activeEmployees} />
         </>
       )}
 
@@ -1970,6 +1971,57 @@ function PendingApprovalPanel({ pending, onReview, busy }) {
             >
               拒絕
             </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// 管理員專用：查看員工帳號（姓名）與密碼（手機號碼），供員工忘記密碼時查詢。
+// 密碼屬敏感資訊，預設以圓點遮蔽，點眼睛才顯示。
+function AccountListPanel({ employees }) {
+  const [show, setShow] = useState(false);
+  if (!employees.length) return null;
+  return (
+    <div style={{
+      background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10,
+      padding: 12, marginBottom: 14,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <div style={{ fontSize: 12, color: COLORS.textMuted }}>員工帳號密碼</div>
+        <button
+          type="button"
+          onClick={() => setShow((v) => !v)}
+          aria-label={show ? "隱藏密碼" : "顯示密碼"}
+          style={{
+            display: "flex", alignItems: "center", gap: 5,
+            background: "none", border: "none", cursor: "pointer",
+            color: show ? COLORS.brass : COLORS.textMuted, fontSize: 12, padding: 4,
+          }}
+        >
+          <EyeIcon off={show} />
+          {show ? "隱藏" : "顯示"}
+        </button>
+      </div>
+      <div style={{ fontSize: 11, color: COLORS.textFaint, marginBottom: 8 }}>
+        密碼即為登入用的手機號碼；員工忘記時可在此查詢。
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {employees.map((e) => (
+          <div key={e.id} style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            background: COLORS.panelRaised, border: `1px solid ${COLORS.border}`,
+            borderRadius: 8, padding: "8px 10px",
+          }}>
+            <span style={{ fontSize: 14, color: COLORS.text, fontWeight: 600, marginRight: 10, wordBreak: "break-all" }}>{e.name}</span>
+            <span style={{
+              fontFamily: "'Space Mono', monospace", fontSize: 14,
+              color: show ? COLORS.brass : COLORS.textFaint,
+              letterSpacing: show ? 0.5 : 2, whiteSpace: "nowrap",
+            }}>
+              {show ? (e.phone || "—") : "••••••••"}
+            </span>
           </div>
         ))}
       </div>
