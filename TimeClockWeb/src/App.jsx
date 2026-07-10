@@ -823,7 +823,7 @@ export default function TimeClockApp() {
         ) : (
           <>
             <div style={{ display: "flex", background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 4, marginBottom: 16 }}>
-              {[["punch", "打卡"], ["admin", "管理紀錄"]].map(([key, label]) => (
+              {[["punch", "打卡"], ["admin", "我的紀錄"]].map(([key, label]) => (
                 <button
                   key={key}
                   onClick={() => setTab(key)}
@@ -860,7 +860,7 @@ export default function TimeClockApp() {
                 locationRestricted={!!(companyLocation && companyLocation.radius)}
               />
             ) : (
-              <AdminView employees={employees} punches={punches} holidays={holidays} otMultiplier={otMultiplier} />
+              <AdminView employees={employees} punches={punches} holidays={holidays} otMultiplier={otMultiplier} lockedEmployeeId={sessionEmp.id} />
             )}
           </>
         )}
@@ -1253,7 +1253,7 @@ function DayEditRow({ row, colCount, onSave, onClose, onToggleHoliday, busy }) {
   );
 }
 
-function AdminView({ employees, punches, holidays, canEdit, onAddEmployee, onRemoveEmployee, onUpdateDay, onToggleHoliday, onExportBackup, onImportBackup, onReviewEmployee, companyLocation, onSaveLocation, onClearLocation, otMultiplier, onSaveOtMultiplier, busy }) {
+function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, onAddEmployee, onRemoveEmployee, onUpdateDay, onToggleHoliday, onExportBackup, onImportBackup, onReviewEmployee, companyLocation, onSaveLocation, onClearLocation, otMultiplier, onSaveOtMultiplier, busy }) {
   const multiplier = otMultiplier ?? 2;
   const today = new Date();
   const overrides = holidays || {};
@@ -1261,7 +1261,7 @@ function AdminView({ employees, punches, holidays, canEdit, onAddEmployee, onRem
   // 沒有 status 欄位的舊資料一律視為 active，維持相容。
   const activeEmployees = employees.filter((e) => e.status !== "pending");
   const pendingEmployees = employees.filter((e) => e.status === "pending");
-  const [employeeId, setEmployeeId] = useState(activeEmployees[0]?.id || "");
+  const [employeeId, setEmployeeId] = useState(lockedEmployeeId || activeEmployees[0]?.id || "");
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [editingDay, setEditingDay] = useState(null);
@@ -1271,13 +1271,17 @@ function AdminView({ employees, punches, holidays, canEdit, onAddEmployee, onRem
   const [newPhone, setNewPhone] = useState("");
 
   useEffect(() => {
-    // 目前選到的員工若不在 active 名冊中（例如剛被移除），自動選回第一位
+    // 鎖定模式（員工只能看自己）時不需自動切換；其餘情況下目前選到的員工
+    // 若不在 active 名冊中（例如剛被移除），自動選回第一位
+    if (lockedEmployeeId) return;
     if (!activeEmployees.some((e) => e.id === employeeId)) {
       setEmployeeId(activeEmployees[0]?.id || "");
     }
-  }, [employees, employeeId]);
+  }, [employees, employeeId, lockedEmployeeId]);
 
-  const emp = activeEmployees.find((e) => e.id === employeeId);
+  // 一般員工端只能看自己的卡：強制鎖定到本人；管理員則用下拉選單選人
+  const selectedId = lockedEmployeeId || employeeId;
+  const emp = activeEmployees.find((e) => e.id === selectedId);
   const total = daysInMonth(year, month);
 
   const rows = useMemo(
@@ -1376,17 +1380,20 @@ function AdminView({ employees, punches, holidays, canEdit, onAddEmployee, onRem
       )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        <select
-          value={employeeId}
-          onChange={(e) => { setEmployeeId(e.target.value); setEditingDay(null); setConfirmRemove(false); }}
-          style={{
-            flex: 1.4, padding: "9px 10px", borderRadius: 8,
-            background: COLORS.panelRaised, border: `1px solid ${COLORS.border}`,
-            color: COLORS.text, fontSize: 13, outline: "none",
-          }}
-        >
-          {activeEmployees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-        </select>
+        {/* 鎖定模式（員工只能看自己）不顯示員工下拉選單，避免看到別人的卡 */}
+        {!lockedEmployeeId && (
+          <select
+            value={employeeId}
+            onChange={(e) => { setEmployeeId(e.target.value); setEditingDay(null); setConfirmRemove(false); }}
+            style={{
+              flex: 1.4, padding: "9px 10px", borderRadius: 8,
+              background: COLORS.panelRaised, border: `1px solid ${COLORS.border}`,
+              color: COLORS.text, fontSize: 13, outline: "none",
+            }}
+          >
+            {activeEmployees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        )}
         <select
           value={month}
           onChange={(e) => setMonth(Number(e.target.value))}
