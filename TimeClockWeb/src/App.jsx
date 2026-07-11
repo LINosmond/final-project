@@ -1617,11 +1617,14 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
                     }}>
                       {r.isHoliday ? (
                         r.subtotalMin > 0 && <div>{fmtSubtotal(r.subtotalMin)} ×2</div>
+                      ) : r.otMin > 0 ? (
+                        // 有超時：不寫合併後的時數，改成分兩行寫「基本 8 小時」與「+超時時數」
+                        <>
+                          <div>{minToHours(r.subtotalMin - r.otMin)}</div>
+                          <div style={{ fontSize: 9, fontWeight: 400 }}>+{minToHours(r.otMin)}</div>
+                        </>
                       ) : (
                         <div>{fmtSubtotal(r.displayMin)}</div>
-                      )}
-                      {!r.isHoliday && r.otMin > 0 && (
-                        <div style={{ fontSize: 9, fontWeight: 400 }}>+{minToHours(r.otMin)}小時</div>
                       )}
                     </td>
                   </tr>
