@@ -1336,7 +1336,10 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
 
   const monthSubtotal = rows.reduce((s, r) => s + r.displayMin, 0);
   const monthRaw = rows.reduce((s, r) => s + r.subtotalMin, 0);
-  const monthBonus = monthSubtotal - monthRaw;
+  // 底部「加乘部分」只顯示平日超時（超過 8 小時）×倍率多出來的工時；國定假日 ×2 不列在這裡，
+  // 只反映在上面的「本月小計」總數中。
+  const monthOtMin = rows.reduce((s, r) => s + r.otMin, 0);
+  const overtimeBonusMin = monthOtMin * (multiplier - 1);
 
   // 匯出目前這位員工的當月考勤成 CSV（工時以「小時」為單位，半小時顯示為 0.5，可用 Excel 開啟做薪資計算）
   const exportEmployeeCsv = () => {
@@ -1646,16 +1649,16 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
           background: COLORS.cardBlueSoft,
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: 12, color: COLORS.cardBlue }}>本月小計（含加乘）</span>
+            <span style={{ fontSize: 12, color: COLORS.cardBlue }}>本月小計（含假日×2、超時加乘）</span>
             <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 16, fontWeight: 700, color: COLORS.cardBlue }}>
               {fmtSubtotal(monthSubtotal) || "0:00"}
             </span>
           </div>
-          {monthBonus > 0 && (
+          {overtimeBonusMin > 0 && (
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 3 }}>
-              <span style={{ fontSize: 10, color: COLORS.cardBlue, opacity: 0.75 }}>原始工時 {fmtSubtotal(monthRaw) || "0:00"}，加乘部分</span>
-              <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 12, fontWeight: 600, color: COLORS.cardRedText }}>
-                +{fmtSubtotal(monthBonus)}
+              <span style={{ fontSize: 10, color: COLORS.cardAmberText, opacity: 0.9 }}>其中平日超時 ×{multiplier} 加乘部分</span>
+              <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 12, fontWeight: 600, color: COLORS.cardAmberText }}>
+                +{fmtSubtotal(overtimeBonusMin)}
               </span>
             </div>
           )}
