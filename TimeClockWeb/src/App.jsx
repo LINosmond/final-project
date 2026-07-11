@@ -1621,7 +1621,7 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
                         <div>{fmtSubtotal(r.displayMin)}</div>
                       )}
                       {!r.isHoliday && r.otMin > 0 && (
-                        <div style={{ fontSize: 9, fontWeight: 400 }}>+{fmtSubtotal(r.otMin)}×{multiplier}</div>
+                        <div style={{ fontSize: 9, fontWeight: 400 }}>+{minToHours(r.otMin)}小時</div>
                       )}
                     </td>
                   </tr>
