@@ -56,6 +56,27 @@ python -m keymouse play demo.json --loops 3 --speed 1.5
 python -m keymouse play demo.json --loops 0 --humanize
 ```
 
+### 打包成獨立執行檔（Windows .exe）
+
+想做成雙擊就能開、不用先裝 Python 的 `.exe`，用 [PyInstaller](https://pyinstaller.org/) 打包。
+**注意：PyInstaller 只能產出與建置環境相同作業系統的執行檔**，所以要 Windows 的 `.exe`
+就得在 Windows 上建。步驟：
+
+1. 在 Windows 安裝 [Python 3](https://www.python.org/downloads/)（安裝時勾選 **Add Python to PATH**；官方版本已內建 tkinter）。
+2. 下載本專案，在 `KeyMouseMacro` 資料夾裡把 `build.bat` 按兩下（或在命令列執行）。
+3. 腳本會自動安裝相依套件並打包，完成後執行檔在 `dist\KeyMouseMacro.exe`。
+
+手動指令（等同 `build.bat` 的內容）：
+
+```bat
+pip install -r requirements.txt pyinstaller
+pyinstaller --noconfirm KeyMouseMacro.spec
+```
+
+> - `KeyMouseMacro.spec` 已把 pynput 各平台後端列入 `hiddenimports`，避免打包後找不到後端。
+> - 產出的是**單一 exe、無主控台視窗**的 GUI 程式。
+> - 部分防毒軟體會對 PyInstaller 打包的執行檔誤報，屬正常現象，可自行加入白名單。
+
 ### 當成函式庫使用
 
 ```python
@@ -82,6 +103,9 @@ KeyMouseMacro/
 │   ├── cli.py        # 命令列介面
 │   ├── gui.py        # tkinter 圖形介面
 │   └── __main__.py   # python -m keymouse 進入點
+├── app.py            # 打包成執行檔時的 GUI 進入點
+├── KeyMouseMacro.spec# PyInstaller 打包設定
+├── build.bat         # Windows 一鍵建置 .exe 腳本
 ├── requirements.txt
 └── README.md
 ```
