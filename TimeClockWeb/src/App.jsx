@@ -1616,7 +1616,7 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
                       fontWeight: r.isHoliday || r.otMin > 0 ? 700 : 400,
                     }}>
                       {r.isHoliday ? (
-                        r.subtotalMin > 0 && <div>{fmtSubtotal(r.subtotalMin)} ×2</div>
+                        r.subtotalMin > 0 && <div>{minToHours(r.subtotalMin)} ×2</div>
                       ) : r.otMin > 0 ? (
                         // 有超時：不寫合併後的時數，改成分兩行寫「基本 8 小時」與「+超時時數」
                         <>
@@ -1624,7 +1624,7 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
                           <div style={{ fontSize: 9, fontWeight: 400 }}>+{minToHours(r.otMin)}</div>
                         </>
                       ) : (
-                        <div>{fmtSubtotal(r.displayMin)}</div>
+                        <div>{r.displayMin ? minToHours(r.displayMin) : ""}</div>
                       )}
                     </td>
                   </tr>
@@ -1654,14 +1654,14 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: 12, color: COLORS.cardBlue }}>本月小計（含假日×2、超時加乘）</span>
             <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 16, fontWeight: 700, color: COLORS.cardBlue }}>
-              {fmtSubtotal(monthSubtotal) || "0:00"}
+              {minToHours(monthSubtotal)}
             </span>
           </div>
           {overtimeBonusMin > 0 && (
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 3 }}>
               <span style={{ fontSize: 10, color: COLORS.cardAmberText, opacity: 0.9 }}>其中平日超時 ×{multiplier} 加乘部分</span>
               <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 12, fontWeight: 600, color: COLORS.cardAmberText }}>
-                +{fmtSubtotal(overtimeBonusMin)}
+                +{minToHours(overtimeBonusMin)}
               </span>
             </div>
           )}
