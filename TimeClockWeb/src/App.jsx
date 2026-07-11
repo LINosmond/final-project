@@ -1306,6 +1306,7 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
   const activeEmployees = employees.filter((e) => e.status !== "pending");
   const pendingEmployees = employees.filter((e) => e.status === "pending");
   const [employeeId, setEmployeeId] = useState(lockedEmployeeId || activeEmployees[0]?.id || "");
+  const [adminTab, setAdminTab] = useState("records"); // 管理員畫面子分頁：records / staff / settings
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [editingDay, setEditingDay] = useState(null);
@@ -1382,48 +1383,66 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
     setShowAddEmp(false);
   };
 
-  if (!activeEmployees.length) {
-    return (
-      <div>
-        {canEdit && (
-          <>
-            <PendingApprovalPanel pending={pendingEmployees} onReview={onReviewEmployee} busy={busy} />
-            <LocationPanel companyLocation={companyLocation} onSave={onSaveLocation} onClear={onClearLocation} busy={busy} />
-            <OvertimeRatePanel multiplier={multiplier} onSave={onSaveOtMultiplier} busy={busy} />
-            <BackupPanel onExport={onExportBackup} onImport={onImportBackup} busy={busy} />
-            <AddEmployeeForm
-              showAddEmp={showAddEmp} setShowAddEmp={setShowAddEmp}
-              newName={newName} setNewName={setNewName}
-              newPhone={newPhone} setNewPhone={setNewPhone}
-              submitAddEmployee={submitAddEmployee} busy={busy}
-            />
-          </>
-        )}
-        <div style={{ textAlign: "center", padding: "50px 0", color: COLORS.textMuted, fontSize: 13 }}>
-          尚無員工帳號
-        </div>
-      </div>
-    );
-  }
+  // 管理員畫面分成三個子分頁（考勤卡／員工管理／設定），避免所有面板全部堆在一起
+  const adminTabBar = canEdit && (
+    <div style={{ display: "flex", background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 4, marginBottom: 14 }}>
+      {[["records", "考勤卡"], ["staff", "員工管理"], ["settings", "設定"]].map(([key, label]) => (
+        <button
+          key={key}
+          onClick={() => setAdminTab(key)}
+          style={{
+            flex: 1, padding: "9px 0", borderRadius: 7, border: "none", cursor: "pointer",
+            fontSize: 13, fontWeight: 600, fontFamily: "'IBM Plex Sans', sans-serif",
+            background: adminTab === key ? COLORS.brassSoft : "transparent",
+            color: adminTab === key ? COLORS.brass : COLORS.textMuted,
+          }}
+        >
+          {label}
+          {key === "staff" && pendingEmployees.length > 0 && (
+            <span style={{ marginLeft: 5, background: COLORS.red, color: "#fff", fontSize: 10, fontWeight: 700, borderRadius: 9, padding: "1px 6px" }}>
+              {pendingEmployees.length}
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+
+  const staffSection = (
+    <>
+      <PendingApprovalPanel pending={pendingEmployees} onReview={onReviewEmployee} busy={busy} />
+      <AddEmployeeForm
+        showAddEmp={showAddEmp} setShowAddEmp={setShowAddEmp}
+        newName={newName} setNewName={setNewName}
+        newPhone={newPhone} setNewPhone={setNewPhone}
+        submitAddEmployee={submitAddEmployee} busy={busy}
+      />
+      <AccountListPanel employees={activeEmployees} />
+    </>
+  );
+
+  const settingsSection = (
+    <>
+      <LocationPanel companyLocation={companyLocation} onSave={onSaveLocation} onClear={onClearLocation} busy={busy} />
+      <OvertimeRatePanel multiplier={multiplier} onSave={onSaveOtMultiplier} busy={busy} />
+      <BackupPanel onExport={onExportBackup} onImport={onImportBackup} busy={busy} />
+    </>
+  );
 
   return (
     <div>
-      {canEdit && (
-        <>
-          <PendingApprovalPanel pending={pendingEmployees} onReview={onReviewEmployee} busy={busy} />
-          <LocationPanel companyLocation={companyLocation} onSave={onSaveLocation} onClear={onClearLocation} busy={busy} />
-          <OvertimeRatePanel multiplier={multiplier} onSave={onSaveOtMultiplier} busy={busy} />
-          <BackupPanel onExport={onExportBackup} onImport={onImportBackup} busy={busy} />
-          <AddEmployeeForm
-            showAddEmp={showAddEmp} setShowAddEmp={setShowAddEmp}
-            newName={newName} setNewName={setNewName}
-            newPhone={newPhone} setNewPhone={setNewPhone}
-            submitAddEmployee={submitAddEmployee} busy={busy}
-          />
-          <AccountListPanel employees={activeEmployees} />
-        </>
-      )}
+      {adminTabBar}
 
+      {canEdit && adminTab === "staff" && staffSection}
+      {canEdit && adminTab === "settings" && settingsSection}
+
+      {(!canEdit || adminTab === "records") && (
+        !activeEmployees.length ? (
+          <div style={{ textAlign: "center", padding: "50px 0", color: COLORS.textMuted, fontSize: 13 }}>
+            {canEdit ? "尚無員工帳號（可到「員工管理」分頁新增或審核申請）" : "尚無員工帳號"}
+          </div>
+        ) : (
+        <>
       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
         {/* 鎖定模式（員工只能看自己）不顯示員工下拉選單，避免看到別人的卡 */}
         {!lockedEmployeeId && (
@@ -1642,6 +1661,9 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
           )}
         </div>
       </div>
+        </>
+        )
+      )}
     </div>
   );
 }
