@@ -1336,9 +1336,10 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
 
   const monthSubtotal = rows.reduce((s, r) => s + r.displayMin, 0);
   const monthRaw = rows.reduce((s, r) => s + r.subtotalMin, 0);
-  // 「本月小計」顯示基本時數：假日照舊 ×2，但平日超時「不」套用 ×倍率（超時加乘另外列在下面那行）
-  const monthBaseMin = rows.reduce((s, r) => s + (r.isHoliday ? r.subtotalMin * 2 : r.subtotalMin), 0);
-  // 底部另外列出平日超時（超過 8 小時）的總時數，純粹統計超時多少，不乘倍率
+  // 「本月小計」只算正常時數：假日照舊 ×2；平日只算每天最多 8 小時的部分（扣掉超時），
+  // 超時時數不算進小計，改成單獨列在最後一行。
+  const monthBaseMin = rows.reduce((s, r) => s + (r.isHoliday ? r.subtotalMin * 2 : r.subtotalMin - r.otMin), 0);
+  // 底部單獨列出平日超時（超過 8 小時）的總時數，不乘倍率
   const monthOtMin = rows.reduce((s, r) => s + r.otMin, 0);
 
   // 匯出目前這位員工的當月考勤成 CSV（工時以「小時」為單位，半小時顯示為 0.5，可用 Excel 開啟做薪資計算）
@@ -1652,14 +1653,14 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
           background: COLORS.cardBlueSoft,
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: 12, color: COLORS.cardBlue }}>本月小計（基本時數，含假日×2）</span>
+            <span style={{ fontSize: 12, color: COLORS.cardBlue }}>本月小計（不含超時，含假日×2）</span>
             <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 16, fontWeight: 700, color: COLORS.cardBlue }}>
               {minToHours(monthBaseMin)}
             </span>
           </div>
           {monthOtMin > 0 && (
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 3 }}>
-              <span style={{ fontSize: 10, color: COLORS.cardAmberText, opacity: 0.9 }}>其中平日超時（超過 8 小時）</span>
+              <span style={{ fontSize: 10, color: COLORS.cardAmberText, opacity: 0.9 }}>平日超時（超過 8 小時，另計）</span>
               <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 12, fontWeight: 600, color: COLORS.cardAmberText }}>
                 {minToHours(monthOtMin)}
               </span>
