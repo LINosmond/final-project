@@ -1336,8 +1336,9 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
 
   const monthSubtotal = rows.reduce((s, r) => s + r.displayMin, 0);
   const monthRaw = rows.reduce((s, r) => s + r.subtotalMin, 0);
-  // 底部「加乘部分」只顯示平日超時（超過 8 小時）×倍率多出來的工時；國定假日 ×2 不列在這裡，
-  // 只反映在上面的「本月小計」總數中。
+  // 「本月小計」顯示基本時數：假日照舊 ×2，但平日超時「不」套用 ×倍率（超時加乘另外列在下面那行）
+  const monthBaseMin = rows.reduce((s, r) => s + (r.isHoliday ? r.subtotalMin * 2 : r.subtotalMin), 0);
+  // 底部「加乘部分」只顯示平日超時（超過 8 小時）×倍率多出來的工時
   const monthOtMin = rows.reduce((s, r) => s + r.otMin, 0);
   const overtimeBonusMin = monthOtMin * (multiplier - 1);
 
@@ -1652,14 +1653,14 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
           background: COLORS.cardBlueSoft,
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: 12, color: COLORS.cardBlue }}>本月小計（含假日×2、超時加乘）</span>
+            <span style={{ fontSize: 12, color: COLORS.cardBlue }}>本月小計（基本時數，含假日×2）</span>
             <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 16, fontWeight: 700, color: COLORS.cardBlue }}>
-              {minToHours(monthSubtotal)}
+              {minToHours(monthBaseMin)}
             </span>
           </div>
           {overtimeBonusMin > 0 && (
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 3 }}>
-              <span style={{ fontSize: 10, color: COLORS.cardAmberText, opacity: 0.9 }}>其中平日超時 ×{multiplier} 加乘部分</span>
+              <span style={{ fontSize: 10, color: COLORS.cardAmberText, opacity: 0.9 }}>平日超時 ×{multiplier} 加乘（另計）</span>
               <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 12, fontWeight: 600, color: COLORS.cardAmberText }}>
                 +{minToHours(overtimeBonusMin)}
               </span>
