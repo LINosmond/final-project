@@ -211,7 +211,9 @@ $('#login-done').addEventListener('click', async (e) => {
   const r = await api('/api/login/done', { method: 'POST' });
   e.target.disabled = false;
   e.target.textContent = '我登入好了 ✓';
-  if (r.loggedIn === false) alert('看起來還沒登入成功，請確認在視窗裡登入好了再按一次。');
+  if (r.loggedIn === false) {
+    alert('已把登入狀態存下來了。如果你確定在視窗裡登入好了，可以直接搜一個商品看看；查不到再按一次「重新登入」。');
+  }
   load();
 });
 $('#login-cancel').addEventListener('click', async () => {

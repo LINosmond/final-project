@@ -16,8 +16,9 @@ export const config = {
   loginUrl: process.env.RO_LOGIN_URL || '',
   port: Number(process.env.PORT) || 5178,
   headless: String(process.env.HEADLESS ?? 'true').toLowerCase() !== 'false',
-  // 登入/查價用哪個瀏覽器：firefox（預設，較能過 gnjoy 驗證）/ chromium / chrome
-  browser: (process.env.RO_BROWSER || 'firefox').toLowerCase(),
+  // 背景查價用哪個瀏覽器：chromium（預設，和 Edge 登入同引擎，cookie 較相容）/ firefox / chrome
+  // 註：登入一律用你電腦真正的 Edge/Chrome，不受這個設定影響。
+  browser: (process.env.RO_BROWSER || 'chromium').toLowerCase(),
   // 選填：萬一 Playwright 找不到瀏覽器，可在 .env 指定執行檔路徑
   executablePath: process.env.PW_EXECUTABLE_PATH || undefined,
 };

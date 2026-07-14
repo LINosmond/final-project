@@ -154,15 +154,23 @@ class NeedsLoginError extends Error {
   }
 }
 
-// 判斷「是否還沒登入」：頁面出現「請先登入」等字，或還有密碼欄位。
+// 判斷「是否還沒登入」。重點：只看「畫面上真的看得見」的元素，
+// 因為登入框的 HTML（含「請先登入」「密碼欄」）就算登入後仍藏在頁面裡，
+// 用純文字比對會誤判成沒登入。
 async function needsLogin(page) {
-  const html = await page.content();
-  const lower = html.toLowerCase();
-  const hit = selectors.needsLoginHints.some((h) =>
-    /[a-z]/i.test(h) ? lower.includes(h.toLowerCase()) : html.includes(h)
-  );
-  const hasPasswordField = (await page.locator('input[type=password]').count()) > 0;
-  return hit || hasPasswordField;
+  // 1) 還看得見「請先登入」之類的按鈕 → 沒登入
+  for (const hint of selectors.needsLoginHints) {
+    if (await page.getByText(hint, { exact: false }).first().isVisible().catch(() => false)) {
+      return true;
+    }
+  }
+  // 2) 還看得見密碼輸入框 → 沒登入
+  const pw = page.locator('input[type=password]');
+  const n = await pw.count().catch(() => 0);
+  for (let i = 0; i < n; i++) {
+    if (await pw.nth(i).isVisible().catch(() => false)) return true;
+  }
+  return false;
 }
 
 async function findSearchInput(page) {
@@ -361,18 +369,19 @@ export async function checkLoggedIn() {
 export async function openLoginBrowser() {
   spawnRealBrowser(config.searchUrl);
   return {
-    // 把真實瀏覽器裡的登入狀態抓回來存檔，並關閉那個視窗。
+    // 把真實瀏覽器裡的登入狀態抓回來存檔。不再多跳頁，避免重新觸發驗證。
     async finish() {
       const browser = await connectRealBrowser();
-      let loggedIn = false;
+      let loggedIn = true; // cookie 有拿到就先當作成功，實際查價會是最終驗證
       try {
         const context = browser.contexts()[0] || (await browser.newContext());
-        const page = context.pages()[0] || (await context.newPage());
-        await page.goto(config.searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-        await page.waitForTimeout(1200);
-        loggedIn = !(await needsLogin(page));
-        // 把真實瀏覽器的 cookie / 登入狀態存下來，給背景查價用
+        // 直接把目前的 cookie / 登入狀態存下來（不需要重新載入頁面）
         await context.storageState({ path: SESSION_PATH });
+        // 用「你已經登入好的那個分頁」判斷登入狀態，不動它、不重新導向
+        const gnjoyPage = context.pages().find((p) => /gnjoy/i.test(p.url()));
+        if (gnjoyPage) {
+          loggedIn = !(await needsLogin(gnjoyPage));
+        }
       } finally {
         await browser.close().catch(() => {}); // 只中斷連線，不會殺掉真實瀏覽器
       }
