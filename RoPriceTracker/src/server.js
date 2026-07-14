@@ -102,28 +102,43 @@ function restartScheduler() {
   }, mins * 60 * 1000);
 }
 
-// 找出本機在區網的 IPv4 位址（手機要用這個連進來）
-function lanAddresses() {
-  const out = [];
-  for (const list of Object.values(os.networkInterfaces())) {
-    for (const ni of list || []) {
-      if (ni.family === 'IPv4' && !ni.internal) out.push(ni.address);
-    }
-  }
-  return out;
+// Tailscale 給裝置的 IP 落在 100.64.0.0/10（100.64 ~ 100.127）。
+function isTailscale(ip) {
+  const [a, b] = ip.split('.').map(Number);
+  return a === 100 && b >= 64 && b <= 127;
 }
 
-// 綁定 0.0.0.0，讓同一個 Wi-Fi 下的手機也連得到
+// 找出本機的 IPv4 位址，分成「同 Wi-Fi 的區網」和「Tailscale（不同網路可用）」。
+function localAddresses() {
+  const lan = [];
+  const tailscale = [];
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const ni of list || []) {
+      if (ni.family !== 'IPv4' || ni.internal) continue;
+      (isTailscale(ni.address) ? tailscale : lan).push(ni.address);
+    }
+  }
+  return { lan, tailscale };
+}
+
+// 綁定 0.0.0.0，讓同一個 Wi-Fi 的手機、以及 Tailscale 的裝置都連得到
 app.listen(config.port, '0.0.0.0', () => {
   restartScheduler();
-  const ips = lanAddresses();
+  const { lan, tailscale } = localAddresses();
   console.log('\n  RO 物價追蹤 已啟動');
   console.log(`  這台電腦上打開：   http://localhost:${config.port}`);
-  if (ips.length) {
-    console.log('\n  手機打開（要跟電腦連同一個 Wi-Fi）：');
-    for (const ip of ips) console.log(`     http://${ip}:${config.port}`);
-    console.log('  在手機瀏覽器輸入上面網址 → 選單「加到主畫面」就變成 App 圖示。');
+  if (lan.length) {
+    console.log('\n  手機打開（跟電腦連同一個 Wi-Fi）：');
+    for (const ip of lan) console.log(`     http://${ip}:${config.port}`);
   }
+  if (tailscale.length) {
+    console.log('\n  手機打開（不同網路也能用 · Tailscale）：');
+    for (const ip of tailscale) console.log(`     http://${ip}:${config.port}`);
+    console.log('  （手機也要開著 Tailscale、登入同一個帳號）');
+  } else {
+    console.log('\n  想在不同網路下使用？裝好 Tailscale 後，這裡會多出一個 100.x.x.x 的網址。');
+  }
+  console.log('\n  在手機瀏覽器輸入上面網址 → 選單「加到主畫面」就變成 App 圖示。');
   console.log('  ※ 第一次啟動時 Windows 若跳出防火牆提示，請勾「私人網路」並允許存取。\n');
   if (!config.account || !config.password) {
     console.log('  ⚠ 尚未設定帳號密碼：請把 .env.example 複製成 .env 並填入帳密後重開。\n');
