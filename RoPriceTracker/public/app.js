@@ -56,7 +56,7 @@ function renderLoginBox(status) {
   const cancelBtn = $('#login-cancel');
 
   if (status.loginOpen) {
-    $('#login-msg').textContent = '登入視窗已打開，請在跳出的 Firefox 視窗登入 gnjoy，完成後按右邊 →';
+    $('#login-msg').textContent = '已打開你電腦的瀏覽器（Edge/Chrome）視窗，請在裡面登入 gnjoy，完成後按右邊 →';
     openBtn.classList.add('hidden');
     doneBtn.classList.remove('hidden');
     cancelBtn.classList.remove('hidden');

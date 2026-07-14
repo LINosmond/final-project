@@ -7,11 +7,75 @@
 //  可調整的地方都標了【調整處】。
 // ─────────────────────────────────────────────────────────────────────────
 import { chromium, firefox } from 'playwright';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config, selectors, DATA_DIR } from './config.js';
 
 const SESSION_PATH = path.join(DATA_DIR, 'session.json');
+
+// ── 用「你電腦真正的瀏覽器」登入（避開 gnjoy 的自動化偵測）─────────────────
+// gnjoy 會擋掉程式跳出的自動化瀏覽器，所以登入改成：開啟你真正的 Edge/Chrome
+// （只加一個除錯連接埠、不帶任何自動化旗標，所以看起來就是正常瀏覽器），
+// 你在裡面登入後，程式再透過連接埠把登入後的 cookie 拿過來存起來。
+const CDP_PORT = Number(process.env.RO_CDP_PORT) || 9222;
+const CDP_URL = `http://127.0.0.1:${CDP_PORT}`;
+const CDP_PROFILE = path.join(DATA_DIR, 'login-browser-profile');
+let realBrowserProc = null;
+
+function findRealBrowser() {
+  // 允許在 .env 用 RO_REAL_BROWSER_PATH 指定；否則找常見的 Edge / Chrome 安裝位置。
+  const candidates = [
+    process.env.RO_REAL_BROWSER_PATH,
+    'C:\\Program Files (x86)\\Microsoft Edge\\Application\\msedge.exe',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+  ].filter(Boolean);
+  return candidates.find((p) => fs.existsSync(p));
+}
+
+function spawnRealBrowser(url) {
+  const exe = findRealBrowser();
+  if (!exe) {
+    throw new Error('找不到 Edge 或 Chrome。請確認電腦有安裝其中一個，或在 .env 設定 RO_REAL_BROWSER_PATH。');
+  }
+  if (!fs.existsSync(CDP_PROFILE)) fs.mkdirSync(CDP_PROFILE, { recursive: true });
+  const args = [
+    `--remote-debugging-port=${CDP_PORT}`,
+    `--user-data-dir=${CDP_PROFILE}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    url || config.searchUrl,
+  ];
+  realBrowserProc = spawn(exe, args, { detached: true, stdio: 'ignore' });
+  realBrowserProc.unref();
+}
+
+function killRealBrowser() {
+  try {
+    realBrowserProc?.kill();
+  } catch {
+    /* 使用者可自行關閉視窗 */
+  }
+  realBrowserProc = null;
+}
+
+async function connectRealBrowser() {
+  // 等除錯連接埠準備好（最多約 15 秒）
+  let lastErr;
+  for (let i = 0; i < 30; i++) {
+    try {
+      return await chromium.connectOverCDP(CDP_URL);
+    } catch (e) {
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+  throw new Error('連不到你的瀏覽器。請確認「登入 gnjoy」開的視窗沒有被關掉。' + (lastErr?.message || ''));
+}
 
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
@@ -292,33 +356,31 @@ export async function checkLoggedIn() {
   }
 }
 
-// 開一個「看得到的」瀏覽器視窗讓使用者手動登入一次。回傳控制把手。
-// 使用者登入好之後呼叫 finishLogin() 把登入狀態存起來，之後就能自動沿用。
+// 打開「你電腦真正的瀏覽器」讓你登入。登入好之後呼叫 finish()：
+// 程式會連進去把登入後的 cookie 存起來，之後背景查價就沿用這份真實登入。
 export async function openLoginBrowser() {
-  const { browser, name } = await launchBrowser({ headless: false });
-  const context = await newSessionContext(browser, name, { width: 1280, height: 900 });
-  const page = await context.newPage();
-  await page.goto(config.searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  spawnRealBrowser(config.searchUrl);
   return {
-    browser,
-    context,
-    page,
-    // 存檔並關閉視窗。回傳是否偵測到已登入。
+    // 把真實瀏覽器裡的登入狀態抓回來存檔，並關閉那個視窗。
     async finish() {
+      const browser = await connectRealBrowser();
       let loggedIn = false;
       try {
-        await page.goto(config.searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        const context = browser.contexts()[0] || (await browser.newContext());
+        const page = context.pages()[0] || (await context.newPage());
+        await page.goto(config.searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
         await page.waitForTimeout(1200);
         loggedIn = !(await needsLogin(page));
-      } catch {
-        /* 忽略 */
+        // 把真實瀏覽器的 cookie / 登入狀態存下來，給背景查價用
+        await context.storageState({ path: SESSION_PATH });
+      } finally {
+        await browser.close().catch(() => {}); // 只中斷連線，不會殺掉真實瀏覽器
       }
-      await saveSession(context);
-      await browser.close();
+      killRealBrowser();
       return loggedIn;
     },
     async cancel() {
-      await browser.close().catch(() => {});
+      killRealBrowser();
     },
   };
 }
