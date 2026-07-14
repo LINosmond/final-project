@@ -51,8 +51,12 @@ button:disabled { opacity: .5; cursor: default; }
 .interval { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
 .interval input { width: 64px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); }
 
-.warn { color: #ffd479; background: #3a2f17; border: 1px solid #5c4a1f; padding: 10px 12px; border-radius: 8px; margin: 12px 0 0; font-size: 13px; }
-.warn code { background: rgba(0,0,0,.3); padding: 1px 5px; border-radius: 4px; }
+.loginbox { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  color: #ffd479; background: #3a2f17; border: 1px solid #5c4a1f; padding: 12px 14px; border-radius: 8px; margin: 12px 0 0; font-size: 14px; }
+.login-actions { display: flex; gap: 8px; }
+#login-open { background: #e6a935; color: #3a2f17; }
+#login-open:hover { background: #ffce6b; }
+#login-done { background: var(--ok); color: #06331a; }
 
 .items { display: flex; flex-direction: column; gap: 14px; }
 .item { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }

@@ -36,9 +36,14 @@
           <button id="save-interval" class="ghost small">儲存</button>
         </label>
       </div>
-      <p id="cred-warning" class="warn hidden">
-        ⚠ 尚未設定帳號密碼。請把專案裡的 <code>.env.example</code> 複製成 <code>.env</code>，填入你的帳密後重開程式。
-      </p>
+      <div id="login-box" class="loginbox hidden">
+        <span id="login-msg"></span>
+        <span class="login-actions">
+          <button id="login-open">登入 gnjoy</button>
+          <button id="login-done" class="hidden">我登入好了 ✓</button>
+          <button id="login-cancel" class="ghost small hidden">取消</button>
+        </span>
+      </div>
     </section>
 
     <section id="items" class="items"></section>

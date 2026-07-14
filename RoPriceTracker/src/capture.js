@@ -10,13 +10,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { captureRun } from './scraper.js';
-import { config, assertCredentials, ROOT } from './config.js';
+import { config, ROOT } from './config.js';
 
 const itemName = process.argv.slice(2).join(' ').trim() || '蘋果';
 
 async function main() {
-  assertCredentials();
   console.log(`\n開始擷取：查詢「${itemName}」…`);
+  console.log('（請先在 App 網頁上「登入 gnjoy」一次，擷取才查得到結果）');
   console.log(`（HEADLESS=${config.headless}；除錯想看畫面可在 .env 設 HEADLESS=false）\n`);
 
   const { html, png, result, responses, url } = await captureRun(itemName, {});

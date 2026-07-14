@@ -32,19 +32,11 @@ if not exist "node_modules" (
 
 if not exist ".env" (
   copy ".env.example" ".env" >nul
-  echo.
-  echo ============================================
-  echo   A settings file named .env was created.
-  echo   Open it in Notepad, fill in your gnjoy
-  echo   account and password, save the file,
-  echo   then run this start.bat again.
-  echo ============================================
-  echo.
-  notepad ".env"
-  pause
-  exit /b 0
 )
 
+echo.
+echo When the page opens, click the yellow "login gnjoy" button once
+echo to log in. After that it tracks prices automatically.
 echo Starting... your browser will open at http://localhost:5178
 start "" http://localhost:5178
 call npm start

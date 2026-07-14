@@ -58,34 +58,24 @@ function attachResponseCollector(context, bucket) {
   });
 }
 
-// 粗略判斷是否已登入。
-async function looksLoggedIn(page) {
-  // 【調整處】若有更明確的「已登入」判斷（例如某個只有登入才會出現的元素），改這裡。
-  const html = (await page.content()).toLowerCase();
-  const hasLogoutHint = selectors.loggedInHints.some((h) => html.includes(h.toLowerCase()));
-  const hasPasswordField = (await page.locator('input[type=password]').count()) > 0;
-  // 出現登出/會員字樣，且畫面上沒有密碼輸入框 → 視為已登入
-  return hasLogoutHint && !hasPasswordField;
+// 這個網站的登入在別的頁面，無法用自動填帳密解決，所以改成「手動登入一次、
+// 之後沿用登入狀態」。這裡只負責判斷「現在到底有沒有登入」。
+class NeedsLoginError extends Error {
+  constructor(msg) {
+    super(msg || '需要登入');
+    this.needsLogin = true;
+  }
 }
 
-// 在目前頁面上用模糊比對找出帳號欄位。
-async function findAccountInput(page) {
-  for (const hint of selectors.accountHints) {
-    const loc = page.locator(
-      `input[name*="${hint}" i], input[id*="${hint}" i], input[placeholder*="${hint}" i]`
-    );
-    if ((await loc.count()) && (await loc.first().isVisible().catch(() => false))) {
-      return loc.first();
-    }
-  }
-  // 備援：第一個可見的文字/email 輸入框
-  const generic = page.locator('input[type=text], input[type=email], input:not([type])');
-  const n = await generic.count();
-  for (let i = 0; i < n; i++) {
-    const el = generic.nth(i);
-    if (await el.isVisible().catch(() => false)) return el;
-  }
-  return null;
+// 判斷「是否還沒登入」：頁面出現「請先登入」等字，或還有密碼欄位。
+async function needsLogin(page) {
+  const html = await page.content();
+  const lower = html.toLowerCase();
+  const hit = selectors.needsLoginHints.some((h) =>
+    /[a-z]/i.test(h) ? lower.includes(h.toLowerCase()) : html.includes(h)
+  );
+  const hasPasswordField = (await page.locator('input[type=password]').count()) > 0;
+  return hit || hasPasswordField;
 }
 
 async function findSearchInput(page) {
@@ -107,53 +97,14 @@ async function findSearchInput(page) {
   return null;
 }
 
-// 執行登入（模糊比對）。
-async function heuristicLogin(page) {
-  const pwField = page.locator('input[type=password]').first();
-  if (!(await pwField.count())) {
-    // 頁面上沒有密碼欄位；可能已登入，或登入在別的網址。
-    return false;
-  }
-  const account = await findAccountInput(page);
-  if (!account) throw new Error('找不到帳號輸入欄位（登入頁面結構可能不同，需要對頁面後調整）。');
-
-  await account.fill(config.account);
-  await pwField.fill(config.password);
-
-  // 送出：優先點送出按鈕，否則在密碼欄位按 Enter。
-  const submit = page.locator(
-    'button[type=submit], input[type=submit], button:has-text("登入"), button:has-text("登录"), a:has-text("登入")'
-  );
-  await Promise.all([
-    page.waitForLoadState('networkidle').catch(() => {}),
-    (async () => {
-      if ((await submit.count()) && (await submit.first().isVisible().catch(() => false))) {
-        await submit.first().click();
-      } else {
-        await pwField.press('Enter');
-      }
-    })(),
-  ]);
-  await page.waitForTimeout(1500);
-  return true;
-}
-
-// 確保已登入：先開查詢頁，需要時再登入。
+// 確保已登入：開查詢頁，若還沒登入就丟出 NeedsLoginError（請使用者手動登入一次）。
 async function ensureLoggedIn(page) {
-  const startUrl = config.loginUrl || config.searchUrl;
-  await page.goto(startUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.waitForTimeout(1000);
-
-  if (await looksLoggedIn(page)) return;
-
-  await heuristicLogin(page);
-
-  // 登入後再回到查詢頁確認
   await page.goto(config.searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.waitForTimeout(1000);
-
-  if ((await page.locator('input[type=password]').count()) > 0 && !(await looksLoggedIn(page))) {
-    throw new Error('登入後仍看到密碼欄位，登入可能失敗（帳密錯誤，或頁面結構需要調整）。');
+  await page.waitForTimeout(1200);
+  if (await needsLogin(page)) {
+    throw new NeedsLoginError(
+      '需要登入 gnjoy：請在 App 點「登入 gnjoy」，在跳出的視窗登入一次即可。'
+    );
   }
 }
 
@@ -161,6 +112,10 @@ async function ensureLoggedIn(page) {
 async function searchOnPage(page, itemName, responseBucket) {
   await page.goto(config.searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(800);
+
+  if (await needsLogin(page)) {
+    throw new NeedsLoginError('需要登入 gnjoy：請在 App 點「登入 gnjoy」重新登入一次。');
+  }
 
   const box = await findSearchInput(page);
   if (!box) throw new Error('找不到搜尋輸入框（查詢頁結構需要對頁面後調整）。');
@@ -267,13 +222,25 @@ export async function fetchMany(names, { headless, onProgress } = {}) {
   const page = await context.newPage();
   const out = {};
   try {
-    await ensureLoggedIn(page);
+    try {
+      await ensureLoggedIn(page);
+    } catch (err) {
+      if (err.needsLogin) {
+        // 還沒登入：把每個商品標成「需要登入」，讓 App 顯示登入提示。
+        for (const name of names) {
+          out[name] = emptyResult(String(err.message || err), true);
+          onProgress?.(name, out[name]);
+        }
+        return out;
+      }
+      throw err;
+    }
     await saveSession(context);
     for (const name of names) {
       try {
         out[name] = await searchOnPage(page, name, responseBucket);
       } catch (err) {
-        out[name] = { ok: false, error: String(err.message || err), listings: [], rawRows: [], sources: [] };
+        out[name] = emptyResult(String(err.message || err), !!err.needsLogin);
       }
       onProgress?.(name, out[name]);
     }
@@ -281,6 +248,61 @@ export async function fetchMany(names, { headless, onProgress } = {}) {
     await browser.close();
   }
   return out;
+}
+
+function emptyResult(error, needsLogin = false) {
+  return { ok: false, error, needsLogin, listings: [], rawRows: [], sources: [] };
+}
+
+// 檢查目前有沒有有效的登入狀態（給 App 顯示「已登入 / 未登入」）。
+export async function checkLoggedIn() {
+  const { browser, context } = await launchContext({ headless: true });
+  const page = await context.newPage();
+  try {
+    await page.goto(config.searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(1200);
+    return !(await needsLogin(page));
+  } catch {
+    return false;
+  } finally {
+    await browser.close();
+  }
+}
+
+// 開一個「看得到的」瀏覽器視窗讓使用者手動登入一次。回傳控制把手。
+// 使用者登入好之後呼叫 finishLogin() 把登入狀態存起來，之後就能自動沿用。
+export async function openLoginBrowser() {
+  const browser = await chromium.launch({ headless: false, executablePath: config.executablePath });
+  const context = await browser.newContext({
+    userAgent: USER_AGENT,
+    viewport: { width: 1280, height: 900 },
+    locale: 'zh-TW',
+    ...(fs.existsSync(SESSION_PATH) ? { storageState: SESSION_PATH } : {}),
+  });
+  const page = await context.newPage();
+  await page.goto(config.searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  return {
+    browser,
+    context,
+    page,
+    // 存檔並關閉視窗。回傳是否偵測到已登入。
+    async finish() {
+      let loggedIn = false;
+      try {
+        await page.goto(config.searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForTimeout(1200);
+        loggedIn = !(await needsLogin(page));
+      } catch {
+        /* 忽略 */
+      }
+      await saveSession(context);
+      await browser.close();
+      return loggedIn;
+    },
+    async cancel() {
+      await browser.close().catch(() => {});
+    },
+  };
 }
 
 export async function fetchItemPrice(name, opts = {}) {

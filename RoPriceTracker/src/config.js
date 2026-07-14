@@ -28,10 +28,10 @@ export const selectors = {
   accountHints: ['account', 'userid', 'user_id', 'username', 'user', 'id', 'login', 'membid', 'memberid', '帳號'],
   // 密碼欄位一律用 input[type=password]，這裡是備援線索
   passwordHints: ['password', 'passwd', 'pwd', 'pass', '密碼'],
-  // 搜尋輸入框可能的線索
-  searchHints: ['search', 'keyword', 'itemname', 'item', 'name', 'goods', '搜尋', '物品', '商品', '道具', '名稱'],
-  // 已登入的判斷：頁面上出現搜尋框、或出現登出字樣
-  loggedInHints: ['登出', 'logout', '會員', 'welcome'],
+  // 搜尋輸入框可能的線索（依實際頁面：placeholder 是「請輸入道具關鍵字」）
+  searchHints: ['關鍵字', '道具', 'search', 'keyword', 'itemname', 'item', 'name', 'goods', '搜尋', '物品', '商品', '名稱'],
+  // 「還沒登入」的判斷：頁面上出現這些字（依實際頁面：按鈕寫「請先登入」）
+  needsLoginHints: ['請先登入', '請登入', '登入後', 'login required'],
 };
 
 export function assertCredentials() {

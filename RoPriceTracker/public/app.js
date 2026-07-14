@@ -31,20 +31,49 @@ function fmt(n) {
   return Number.isFinite(n) ? n.toLocaleString('zh-TW') : '—';
 }
 
+let lastStatus = {};
+
 function renderStatus(status) {
+  lastStatus = status;
   const el = $('#status');
   if (status.running) {
     el.innerHTML = `<span class="spin dot">⟳</span> 更新中…${status.currentItem ? '（' + status.currentItem + '）' : ''}`;
+  } else if (status.needsLogin) {
+    el.innerHTML = `<span class="err">尚未登入 gnjoy</span>`;
   } else if (status.lastError) {
     el.innerHTML = `<span class="err">更新出錯：${status.lastError}</span>`;
   } else {
     el.innerHTML = `<span class="dot">●</span> 上次全部更新：${timeAgo(status.lastRunAt)}`;
   }
-  $('#cred-warning').classList.toggle('hidden', status.hasCredentials);
+  renderLoginBox(status);
+}
+
+function renderLoginBox(status) {
+  const box = $('#login-box');
+  const show = status.needsLogin || status.loginOpen;
+  box.classList.toggle('hidden', !show);
+  if (!show) return;
+  const openBtn = $('#login-open');
+  const doneBtn = $('#login-done');
+  const cancelBtn = $('#login-cancel');
+  if (status.loginOpen) {
+    $('#login-msg').textContent = '登入視窗已打開，請在跳出的瀏覽器視窗登入 gnjoy，完成後按右邊 →';
+    openBtn.classList.add('hidden');
+    doneBtn.classList.remove('hidden');
+    cancelBtn.classList.remove('hidden');
+  } else {
+    $('#login-msg').textContent = '⚠ 還沒登入 gnjoy，要先登入一次才能查價。';
+    openBtn.classList.remove('hidden');
+    openBtn.disabled = false;
+    openBtn.textContent = '登入 gnjoy';
+    doneBtn.classList.add('hidden');
+    cancelBtn.classList.add('hidden');
+  }
 }
 
 function renderResultBody(result) {
   if (!result) return `<div class="muted">尚未查詢，稍待自動更新…</div>`;
+  if (result.needsLogin) return `<div class="muted">🔒 需要先登入 gnjoy（點上方黃色「登入 gnjoy」按鈕）。</div>`;
   if (!result.ok) return `<div class="muted err">查詢失敗：${result.error || '未知錯誤'}</div>`;
 
   const listings = result.listings || [];
@@ -152,6 +181,28 @@ $('#refresh-all').addEventListener('click', async (e) => {
   e.target.disabled = true;
   await api('/api/refresh', { method: 'POST' });
   e.target.disabled = false;
+  load();
+});
+
+// 登入流程
+$('#login-open').addEventListener('click', async (e) => {
+  e.target.disabled = true;
+  e.target.textContent = '正在打開登入視窗…';
+  const r = await api('/api/login/open', { method: 'POST' });
+  if (r.error) { alert(r.error); e.target.disabled = false; e.target.textContent = '登入 gnjoy'; }
+  load();
+});
+$('#login-done').addEventListener('click', async (e) => {
+  e.target.disabled = true;
+  e.target.textContent = '確認中…';
+  const r = await api('/api/login/done', { method: 'POST' });
+  e.target.disabled = false;
+  e.target.textContent = '我登入好了 ✓';
+  if (r.loggedIn === false) alert('看起來還沒登入成功，請確認在視窗裡登入好了再按一次。');
+  load();
+});
+$('#login-cancel').addEventListener('click', async () => {
+  await api('/api/login/cancel', { method: 'POST' });
   load();
 });
 
