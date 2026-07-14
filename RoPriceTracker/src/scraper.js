@@ -6,7 +6,7 @@
 //  （用 npm run capture 產生的檔案），主要就是回來調整這個檔案。
 //  可調整的地方都標了【調整處】。
 // ─────────────────────────────────────────────────────────────────────────
-import { chromium } from 'playwright';
+import { chromium, firefox } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config, selectors, DATA_DIR } from './config.js';
@@ -17,21 +17,39 @@ const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
-// 建立瀏覽器情境，若之前登入過就沿用登入狀態（減少重複登入、降低被擋機率）。
-async function launchContext({ headless } = {}) {
-  const browser = await chromium.launch({
-    headless: headless ?? config.headless,
-    executablePath: config.executablePath, // 通常為 undefined，讓 Playwright 自己找
-  });
-  const contextOptions = {
-    userAgent: USER_AGENT,
-    viewport: { width: 1366, height: 900 },
-    locale: 'zh-TW',
-  };
-  if (fs.existsSync(SESSION_PATH)) {
-    contextOptions.storageState = SESSION_PATH;
+// 依 .env 的 RO_BROWSER 選瀏覽器。gnjoy 登入的環境驗證在 Chrome 家族容易失敗，
+// 預設用 Firefox（實測較能通過），並隱藏自動化特徵讓它更像正常瀏覽器。
+function pickBrowser() {
+  const b = (config.browser || 'firefox').toLowerCase();
+  if (b === 'chrome') return { type: chromium, name: 'chrome', channel: 'chrome' };
+  if (b === 'chromium') return { type: chromium, name: 'chromium' };
+  return { type: firefox, name: 'firefox' };
+}
+
+async function launchBrowser({ headless } = {}) {
+  const { type, name, channel } = pickBrowser();
+  const opts = { headless: headless ?? config.headless, executablePath: config.executablePath };
+  if (channel) opts.channel = channel;
+  if (name === 'firefox') {
+    // 隱藏 navigator.webdriver 等自動化痕跡
+    opts.firefoxUserPrefs = { 'dom.webdriver.enabled': false, useAutomationExtension: false };
+  } else {
+    opts.args = ['--disable-blink-features=AutomationControlled'];
   }
-  const context = await browser.newContext(contextOptions);
+  return { browser: await type.launch(opts), name };
+}
+
+// 用指定瀏覽器建立情境，若之前登入過就沿用登入狀態。
+async function newSessionContext(browser, name, viewport) {
+  const opts = { viewport, locale: 'zh-TW' };
+  if (name !== 'firefox') opts.userAgent = USER_AGENT; // Firefox 用它自己的 UA 較自然
+  if (fs.existsSync(SESSION_PATH)) opts.storageState = SESSION_PATH;
+  return browser.newContext(opts);
+}
+
+async function launchContext({ headless } = {}) {
+  const { browser, name } = await launchBrowser({ headless });
+  const context = await newSessionContext(browser, name, { width: 1366, height: 900 });
   return { browser, context };
 }
 
@@ -272,13 +290,8 @@ export async function checkLoggedIn() {
 // 開一個「看得到的」瀏覽器視窗讓使用者手動登入一次。回傳控制把手。
 // 使用者登入好之後呼叫 finishLogin() 把登入狀態存起來，之後就能自動沿用。
 export async function openLoginBrowser() {
-  const browser = await chromium.launch({ headless: false, executablePath: config.executablePath });
-  const context = await browser.newContext({
-    userAgent: USER_AGENT,
-    viewport: { width: 1280, height: 900 },
-    locale: 'zh-TW',
-    ...(fs.existsSync(SESSION_PATH) ? { storageState: SESSION_PATH } : {}),
-  });
+  const { browser, name } = await launchBrowser({ headless: false });
+  const context = await newSessionContext(browser, name, { width: 1280, height: 900 });
   const page = await context.newPage();
   await page.goto(config.searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   return {

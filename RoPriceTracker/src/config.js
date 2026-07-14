@@ -16,7 +16,9 @@ export const config = {
   loginUrl: process.env.RO_LOGIN_URL || '',
   port: Number(process.env.PORT) || 5178,
   headless: String(process.env.HEADLESS ?? 'true').toLowerCase() !== 'false',
-  // 選填：萬一 Playwright 找不到瀏覽器，可在 .env 指定 chrome 執行檔路徑
+  // 登入/查價用哪個瀏覽器：firefox（預設，較能過 gnjoy 驗證）/ chromium / chrome
+  browser: (process.env.RO_BROWSER || 'firefox').toLowerCase(),
+  // 選填：萬一 Playwright 找不到瀏覽器，可在 .env 指定執行檔路徑
   executablePath: process.env.PW_EXECUTABLE_PATH || undefined,
 };
 
