@@ -77,5 +77,27 @@ table.listings th { color: var(--muted); font-weight: 600; }
 
 .empty { text-align: center; color: var(--muted); margin-top: 40px; }
 .hidden { display: none; }
+
+/* iOS 瀏海/底部安全區留白 */
+.topbar { padding-top: max(16px, env(safe-area-inset-top)); }
+main { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+
+/* ── 手機版面 ───────────────────────────────────────── */
+@media (max-width: 640px) {
+  .topbar { flex-direction: column; align-items: flex-start; gap: 4px; padding: 12px 16px; }
+  .topbar h1 { font-size: 18px; }
+  main { padding: 16px 12px 80px; }
+  #add-form { flex-direction: column; }
+  #add-input, #add-form button { width: 100%; }
+  #add-form button { padding: 13px 16px; }        /* 好按一點 */
+  .controls { gap: 12px; }
+  #refresh-all { width: 100%; }
+  .interval { width: 100%; justify-content: flex-start; }
+  .item-head { flex-wrap: wrap; }
+  .item-body { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table.listings { min-width: 340px; }
+  .best { font-size: 20px; }
+  button.small { padding: 9px 14px; }             /* 手指好點 */
+}
 .spin { display: inline-block; animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

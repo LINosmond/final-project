@@ -1,5 +1,6 @@
 // 本機伺服器：提供網頁介面 + API，並負責「定時自動更新」。
 import express from 'express';
+import os from 'node:os';
 import { config, PUBLIC_DIR, assertCredentials } from './config.js';
 import * as store from './store.js';
 import { fetchMany } from './scraper.js';
@@ -101,10 +102,29 @@ function restartScheduler() {
   }, mins * 60 * 1000);
 }
 
-app.listen(config.port, () => {
+// 找出本機在區網的 IPv4 位址（手機要用這個連進來）
+function lanAddresses() {
+  const out = [];
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const ni of list || []) {
+      if (ni.family === 'IPv4' && !ni.internal) out.push(ni.address);
+    }
+  }
+  return out;
+}
+
+// 綁定 0.0.0.0，讓同一個 Wi-Fi 下的手機也連得到
+app.listen(config.port, '0.0.0.0', () => {
   restartScheduler();
+  const ips = lanAddresses();
   console.log('\n  RO 物價追蹤 已啟動');
-  console.log(`  請用瀏覽器打開： http://localhost:${config.port}\n`);
+  console.log(`  這台電腦上打開：   http://localhost:${config.port}`);
+  if (ips.length) {
+    console.log('\n  手機打開（要跟電腦連同一個 Wi-Fi）：');
+    for (const ip of ips) console.log(`     http://${ip}:${config.port}`);
+    console.log('  在手機瀏覽器輸入上面網址 → 選單「加到主畫面」就變成 App 圖示。');
+  }
+  console.log('  ※ 第一次啟動時 Windows 若跳出防火牆提示，請勾「私人網路」並允許存取。\n');
   if (!config.account || !config.password) {
     console.log('  ⚠ 尚未設定帳號密碼：請把 .env.example 複製成 .env 並填入帳密後重開。\n');
   }
