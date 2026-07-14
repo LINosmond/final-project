@@ -53,6 +53,11 @@ async function launchContext({ headless } = {}) {
   return { browser, context };
 }
 
+// 有沒有存過登入狀態（給 App 顯示「已登入 / 未登入」）。
+export function hasSavedSession() {
+  return fs.existsSync(SESSION_PATH);
+}
+
 async function saveSession(context) {
   try {
     await context.storageState({ path: SESSION_PATH });

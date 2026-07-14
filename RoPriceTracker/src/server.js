@@ -3,7 +3,7 @@ import express from 'express';
 import os from 'node:os';
 import { config, PUBLIC_DIR } from './config.js';
 import * as store from './store.js';
-import { fetchMany, openLoginBrowser } from './scraper.js';
+import { fetchMany, openLoginBrowser, hasSavedSession } from './scraper.js';
 
 const app = express();
 app.use(express.json());
@@ -60,6 +60,7 @@ app.get('/api/state', (req, res) => {
       lastError: runState.lastError,
       needsLogin: runState.needsLogin,
       loginOpen: Boolean(loginHandle),
+      hasSession: hasSavedSession(),
     },
   });
 });

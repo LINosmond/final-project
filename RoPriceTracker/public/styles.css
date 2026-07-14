@@ -53,6 +53,7 @@ button:disabled { opacity: .5; cursor: default; }
 
 .loginbox { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
   color: #ffd479; background: #3a2f17; border: 1px solid #5c4a1f; padding: 12px 14px; border-radius: 8px; margin: 12px 0 0; font-size: 14px; }
+.loginbox.ok { color: #bff7d4; background: #16321f; border-color: #2c6b41; }
 .login-actions { display: flex; gap: 8px; }
 #login-open { background: #e6a935; color: #3a2f17; }
 #login-open:hover { background: #ffce6b; }

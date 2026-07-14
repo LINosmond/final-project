@@ -50,24 +50,37 @@ function renderStatus(status) {
 
 function renderLoginBox(status) {
   const box = $('#login-box');
-  const show = status.needsLogin || status.loginOpen;
-  box.classList.toggle('hidden', !show);
-  if (!show) return;
+  box.classList.remove('hidden'); // 登入區永遠顯示，方便隨時登入
   const openBtn = $('#login-open');
   const doneBtn = $('#login-done');
   const cancelBtn = $('#login-cancel');
+
   if (status.loginOpen) {
-    $('#login-msg').textContent = '登入視窗已打開，請在跳出的瀏覽器視窗登入 gnjoy，完成後按右邊 →';
+    $('#login-msg').textContent = '登入視窗已打開，請在跳出的 Firefox 視窗登入 gnjoy，完成後按右邊 →';
     openBtn.classList.add('hidden');
     doneBtn.classList.remove('hidden');
     cancelBtn.classList.remove('hidden');
-  } else {
-    $('#login-msg').textContent = '⚠ 還沒登入 gnjoy，要先登入一次才能查價。';
-    openBtn.classList.remove('hidden');
-    openBtn.disabled = false;
+    box.classList.remove('ok');
+    return;
+  }
+
+  doneBtn.classList.add('hidden');
+  cancelBtn.classList.add('hidden');
+  openBtn.classList.remove('hidden');
+  openBtn.disabled = false;
+
+  if (status.needsLogin) {
+    $('#login-msg').textContent = '⚠ 還沒登入 gnjoy，先點右邊登入才能查價。';
     openBtn.textContent = '登入 gnjoy';
-    doneBtn.classList.add('hidden');
-    cancelBtn.classList.add('hidden');
+    box.classList.remove('ok');
+  } else if (status.hasSession) {
+    $('#login-msg').textContent = '✓ 已登入 gnjoy（若查不到價格可重新登入）。';
+    openBtn.textContent = '重新登入';
+    box.classList.add('ok');
+  } else {
+    $('#login-msg').textContent = '第一次使用請先登入 gnjoy（點右邊 →），登入一次之後會記住。';
+    openBtn.textContent = '登入 gnjoy';
+    box.classList.remove('ok');
   }
 }
 
