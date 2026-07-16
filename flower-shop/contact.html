@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>聯絡・預約｜LOVEFOR 花坊</title>
+  <meta name="description" content="聯絡 LOVEFOR 花坊：電話、LINE 官方帳號、門市地址與營業時間，線上填寫預約諮詢表單，花藝師一對一為你設計。">
+  <meta name="theme-color" content="#c1547a">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,500&family=Noto+Sans+TC:wght@400;500;600&family=Noto+Serif+TC:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap nav">
+      <a class="brand" href="index.html" aria-label="LOVEFOR 花坊 首頁"><span class="mark">LOVE<em>FOR</em></span><span class="sub">花坊</span></a>
+      <nav class="nav-links" aria-label="主選單">
+        <a href="index.html">首頁</a>
+        <a href="about.html">關於我們</a>
+        <a href="products.html">花禮系列</a>
+        <a href="gallery.html">作品集</a>
+        <a href="contact.html" aria-current="page">聯絡・預約</a>
+        <a class="btn btn-primary nav-cta" href="#form">立即訂花</a>
+      </nav>
+      <button class="nav-toggle" aria-label="開啟選單" aria-expanded="false"><span></span><span></span><span></span></button>
+    </div>
+  </header>
+
+  <main>
+    <section class="page-hero">
+      <div class="wrap">
+        <p class="crumbs"><a href="index.html">首頁</a> ／ 聯絡・預約</p>
+        <h1>聯絡・預約</h1>
+        <p>加 LINE 最快，或填寫下方表單，我們將盡快與你聯繫。</p>
+      </div>
+    </section>
+
+    <section class="section" id="form">
+      <div class="wrap contact-grid">
+        <div class="reveal">
+          <span class="eyebrow">聯絡資訊</span>
+          <h2 style="font-size:clamp(1.8rem,4vw,2.6rem);margin-bottom:0.6rem">我們在這裡等你</h2>
+          <p class="lead">大台北地區當日配送，全台宅配到府。歡迎來電或加 LINE 諮詢。</p>
+          <div class="info-list">
+            <div class="info-item">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5c0 9 6 15 15 15l1-4-5-2-2 2a12 12 0 0 1-5-5l2-2-2-5-4 1z"/></svg>
+              <div><h4>電話訂購</h4><p>02-0000-0000</p></div>
+            </div>
+            <div class="info-item">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3c5 0 9 3.4 9 7.6 0 4.2-4 7.6-9 7.6-.9 0-1.8-.1-2.6-.3L5 20l1-3.3C4.2 15.3 3 13.1 3 10.6 3 6.4 7 3 12 3z"/></svg>
+              <div><h4>LINE 官方帳號</h4><p>@lovefor（點我加好友）</p></div>
+            </div>
+            <div class="info-item">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 21s-7-6-7-11a7 7 0 0 1 14 0c0 5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
+              <div><h4>門市地址</h4><p>台北市〇〇區〇〇路 000 號</p></div>
+            </div>
+            <div class="info-item">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+              <div><h4>營業時間</h4><p>每日 10:00–20:00</p></div>
+            </div>
+          </div>
+          <div class="frame wide" style="margin-top:2rem;aspect-ratio:16/8"><span class="frame-note">Google 地圖嵌入位置<br>（上線時貼入 iframe）</span></div>
+        </div>
+
+        <form class="card reveal" data-demo aria-label="預約諮詢表單">
+          <h3 style="font-size:1.6rem;margin-bottom:0.4rem">預約諮詢</h3>
+          <p class="lead" style="font-size:0.96rem;margin-bottom:1.6rem">填寫需求，花藝師將為你提供設計建議與報價。</p>
+          <div class="field"><label for="name">稱呼 *</label><input id="name" name="name" required autocomplete="name" placeholder="您的稱呼"></div>
+          <div class="field"><label for="phone">聯絡電話 / LINE *</label><input id="phone" name="phone" required placeholder="方便聯繫的電話或 LINE ID"></div>
+          <div class="field"><label for="occasion">場合</label>
+            <select id="occasion" name="occasion">
+              <option value="">請選擇</option>
+              <option>日常花束</option><option>求婚・紀念</option><option>生日・情人節</option>
+              <option>婚禮花藝</option><option>開幕・祝賀</option><option>企業訂花</option><option>其他</option>
+            </select>
+          </div>
+          <div class="field"><label for="budget">預算範圍</label>
+            <select id="budget" name="budget">
+              <option value="">請選擇</option>
+              <option>NT$ 1,000 以下</option><option>NT$ 1,000–2,000</option>
+              <option>NT$ 2,000–4,000</option><option>NT$ 4,000 以上</option>
+            </select>
+          </div>
+          <div class="field"><label for="msg">需求說明</label><textarea id="msg" name="msg" placeholder="送禮對象、偏好色系、希望送達日期等"></textarea></div>
+          <button class="btn btn-primary btn-lg" type="submit" style="width:100%;justify-content:center">送出預約</button>
+          <p class="form-result form-note" role="status" aria-live="polite"></p>
+        </form>
+      </div>
+    </section>
+
+    <section class="section band-2">
+      <div class="wrap">
+        <div class="sec-head center reveal"><span class="eyebrow">常見問題</span><h2>訂購前，你可能想問</h2></div>
+        <div class="faq reveal">
+          <details><summary>可以當天下單、當天送達嗎？</summary><p>大台北地區於營業時間內下單，多可安排當日配送；其他地區採宅配，建議提前 1–2 天預訂以確保花材與到貨時間。急件請直接來電或加 LINE 詢問。</p></details>
+          <details><summary>可以指定顏色與花材嗎？</summary><p>當然可以。所有花禮皆能依色系、對象與預算客製，只要在諮詢時告訴我們你的想法，花藝師會提供建議與報價。</p></details>
+          <details><summary>如何付款？</summary><p>提供匯款、信用卡與 LINE Pay 等方式（實際以門市公告為準），確認訂單後我們會提供付款資訊。</p></details>
+          <details><summary>婚禮或活動佈置怎麼預約？</summary><p>建議提前 2–4 週預約，我們會安排場勘與提案，並於活動當天到場佈置與撤場。歡迎透過表單或 LINE 預約諮詢。</p></details>
+          <details><summary>花束可以保存多久？</summary><p>我們採當日新鮮製作，一般鮮花花束在適當照顧下可維持約 5–7 天。附贈的保養小卡會說明換水與修剪方式。</p></details>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <div class="footer-grid">
+        <div class="footer-about"><a class="brand" href="index.html"><span class="mark">LOVE<em>FOR</em></span><span class="sub">花坊</span></a><p>為每一個心動的時刻綻放。職人手作花束・當日新鮮直送・客製花禮設計。</p><div class="socials"><a href="#" aria-label="Facebook">f</a><a href="#" aria-label="Instagram">◎</a><a href="#" aria-label="LINE">L</a></div></div>
+        <div class="footer-col"><h4>快速連結</h4><a href="about.html">關於我們</a><a href="products.html">花禮系列</a><a href="gallery.html">作品集</a><a href="contact.html">聯絡・預約</a></div>
+        <div class="footer-col"><h4>服務項目</h4><a href="products.html">日常花束</a><a href="products.html">婚禮花藝</a><a href="products.html">開幕祝賀</a><a href="products.html">企業訂花</a></div>
+        <div class="footer-col"><h4>聯絡資訊</h4><p>📍 台北市〇〇區〇〇路 000 號</p><p>📞 02-0000-0000</p><p>💬 LINE：@lovefor</p><p>🕘 每日 10:00–20:00</p></div>
+      </div>
+      <div class="footer-bottom"><span>© 2026 LOVEFOR 花坊. All rights reserved.</span><span>Designed with ❀ in Taiwan</span></div>
+    </div>
+  </footer>
+  <script src="assets/main.js"></script>
+</body>
+</html>
