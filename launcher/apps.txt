@@ -1,0 +1,25 @@
+# ============================================
+#  一鍵啟動清單 apps.txt
+# --------------------------------------------
+#  用法：一行寫一個要開的東西，雙擊「啟動.bat」就會全部打開。
+#  可以是：
+#    - 網址：       https://www.google.com
+#    - 程式路徑：   C:\Program Files\Google\Chrome\Application\chrome.exe
+#    - 檔案路徑：   D:\我的資料\報表.xlsx
+#    - 資料夾：     D:\我的資料
+#    - 系統程式名： notepad
+#
+#  規則：
+#    - 開頭是 #  的整行 = 註解（不會執行），可以用來備註或暫時關掉某項。
+#    - 空白行會被忽略。
+#    - 不用加引號，路徑有空格也沒關係。
+# ============================================
+
+# ---- 下面是範例，請改成你自己的。改好後把行首的 # 拿掉就會生效 ----
+
+# https://www.google.com
+# https://mail.google.com
+# notepad
+# C:\Program Files\Google\Chrome\Application\chrome.exe
+# C:\Users\你的名字\AppData\Local\Programs\Microsoft VS Code\Code.exe
+# C:\Users\你的名字\AppData\Local\LINE\bin\LineLauncher.exe
