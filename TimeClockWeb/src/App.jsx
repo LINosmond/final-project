@@ -729,7 +729,8 @@ export default function TimeClockApp() {
       }
     }
 
-    const entry = { id: uid(), employeeId: sessionEmp.id, employeeName: sessionEmp.name, type, ts: d.getTime() };
+    // ts＝員工選的半點時間（正式記錄）；actualTs＝實際按下打卡的當下時間（供管理員比對，防止亂打卡）
+    const entry = { id: uid(), employeeId: sessionEmp.id, employeeName: sessionEmp.name, type, ts: d.getTime(), actualTs: Date.now() };
     setBusy(true);
     try {
       // 用伺服器端的原子操作附加打卡紀錄，避免兩筆幾乎同時送出的打卡互相覆蓋
@@ -1071,9 +1072,16 @@ function buildDayCell(dayPunches) {
   const ins = sorted.filter((p) => p.type === "in");
   const outs = sorted.filter((p) => p.type === "out");
 
-  // 一天最多兩個時段（上午一次、下午一次，中間可休息）：依打卡順序對應到上午／下午欄位
-  const am = { inTs: ins[0]?.ts ?? null, outTs: outs[0]?.ts ?? null };
-  const pm = { inTs: ins[1]?.ts ?? null, outTs: outs[1]?.ts ?? null };
+  // 一天最多兩個時段（上午一次、下午一次，中間可休息）：依打卡順序對應到上午／下午欄位。
+  // actualTs 為員工實際按下打卡的當下時間（可能與選的半點時間不同），供管理員比對。
+  const am = {
+    inTs: ins[0]?.ts ?? null, outTs: outs[0]?.ts ?? null,
+    inActual: ins[0]?.actualTs ?? null, outActual: outs[0]?.actualTs ?? null,
+  };
+  const pm = {
+    inTs: ins[1]?.ts ?? null, outTs: outs[1]?.ts ?? null,
+    inActual: ins[1]?.actualTs ?? null, outActual: outs[1]?.actualTs ?? null,
+  };
 
   const sessionMin = (inTs, outTs) => (inTs && outTs && outTs > inTs ? (outTs - inTs) / 60000 : 0);
   const subtotalMin = sessionMin(am.inTs, am.outTs) + sessionMin(pm.inTs, pm.outTs);
@@ -1083,6 +1091,22 @@ function buildDayCell(dayPunches) {
 
 function fmtCell(ts) {
   return ts ? fmtHM(new Date(ts)) : "";
+}
+
+// 考勤表格的時間欄：顯示員工選的（半點）時間；管理員檢視時，若「實際按打卡的當下時間」與其不同，
+// 下方以小字標出「實 HH:MM」，方便比對、防止員工亂打卡。（管理員手動補登的紀錄沒有實際時間，不顯示）
+function PunchTimeCell({ selTs, actualTs, showActual }) {
+  if (!selTs) return null;
+  const sel = fmtHM(new Date(selTs));
+  const showReal = showActual && actualTs && fmtHM(new Date(actualTs)) !== sel;
+  return (
+    <>
+      <div>{sel}</div>
+      {showReal && (
+        <div style={{ fontSize: 8, color: "#B23B2E", fontWeight: 400 }}>實 {fmtHM(new Date(actualTs))}</div>
+      )}
+    </>
+  );
 }
 
 function fmtSubtotal(min) {
@@ -1566,7 +1590,7 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
             <span style={{ color: COLORS.cardBlue }}>{year} 年 {month} 月份</span>
           </div>
           {canEdit && (
-            <div style={{ fontSize: 11, color: COLORS.cardBlue, opacity: 0.75 }}>系統會自動偵測國定假日；點選任一天也可手動修改上班／下班時間或覆寫假日設定</div>
+            <div style={{ fontSize: 11, color: COLORS.cardBlue, opacity: 0.75 }}>系統會自動偵測國定假日；點選任一天也可手動修改上班／下班時間或覆寫假日設定。時間下方紅色「實 ○○:○○」為員工實際按下打卡的當下時間，可與登記時間比對。</div>
           )}
           <div style={{ display: "flex", gap: 14, marginTop: 6, fontSize: 10 }}>
             <span style={{ display: "flex", alignItems: "center", gap: 4, color: COLORS.cardRedText }}>
@@ -1606,10 +1630,10 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
                     <td style={{ ...tdStyle(true), color: r.isHoliday ? COLORS.cardRedText : tdStyle(true).color, fontWeight: r.isHoliday ? 700 : 400 }}>
                       {r.day}{r.isHoliday ? " 假" : ""}
                     </td>
-                    <td style={tdStyle()}>{fmtCell(r.am.inTs)}</td>
-                    <td style={tdStyle()}>{fmtCell(r.am.outTs)}</td>
-                    <td style={tdStyle()}>{fmtCell(r.pm.inTs)}</td>
-                    <td style={tdStyle()}>{fmtCell(r.pm.outTs)}</td>
+                    <td style={tdStyle()}><PunchTimeCell selTs={r.am.inTs} actualTs={r.am.inActual} showActual={canEdit} /></td>
+                    <td style={tdStyle()}><PunchTimeCell selTs={r.am.outTs} actualTs={r.am.outActual} showActual={canEdit} /></td>
+                    <td style={tdStyle()}><PunchTimeCell selTs={r.pm.inTs} actualTs={r.pm.inActual} showActual={canEdit} /></td>
+                    <td style={tdStyle()}><PunchTimeCell selTs={r.pm.outTs} actualTs={r.pm.outActual} showActual={canEdit} /></td>
                     <td style={{
                       ...tdStyle(),
                       background: r.isHoliday ? COLORS.cardRedBg : (r.otMin > 0 ? COLORS.cardAmberBg : undefined),
