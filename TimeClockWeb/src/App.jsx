@@ -393,6 +393,8 @@ export default function TimeClockApp() {
   const [toast, setToast] = useState("");
   const [toastTone, setToastTone] = useState("info");
   const toastTimer = useRef(null);
+  // 有本機打卡紀錄正在背景寫回試算表時設為 true，讓輪詢暫時不要用伺服器舊資料覆蓋掉剛改的內容
+  const punchesWriteInFlight = useRef(false);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -445,7 +447,8 @@ export default function TimeClockApp() {
     if (emp !== undefined) setEmployees(emp);
 
     const pun = parse(raw.punches, []);
-    if (pun !== undefined) setPunches(pun);
+    // 若有本機打卡編輯正在背景寫回，暫時不要用伺服器資料覆蓋，避免剛改的內容閃回舊值
+    if (pun !== undefined && !punchesWriteInFlight.current) setPunches(pun);
 
     let hol = parse(raw.holidays, {});
     if (hol !== undefined) {
@@ -782,10 +785,19 @@ export default function TimeClockApp() {
     addIfSet(times.amOut, "out");
     addIfSet(times.pmIn, "in");
     addIfSet(times.pmOut, "out");
-    setBusy(true);
-    await savePunches([...others, ...built]);
-    setBusy(false);
+    const next = [...others, ...built];
+    // 立即反映到畫面（不等試算表回應），讓管理員按儲存後馬上看到結果
+    setPunches(next);
     flash("已更新打卡紀錄");
+    // 背景寫回試算表；期間先擋住輪詢覆蓋，寫完再放行
+    punchesWriteInFlight.current = true;
+    try {
+      await window.storage.set("punches", JSON.stringify(next), true);
+    } catch (e) {
+      flash("打卡儲存失敗，請稍後再試", "error");
+    } finally {
+      punchesWriteInFlight.current = false;
+    }
   };
 
   const loading = employees === null || punches === null || holidays === null || otMultiplier === null || !sessionChecked;
@@ -1660,9 +1672,10 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
                       busy={busy}
                       onClose={() => setEditingDay(null)}
                       onToggleHoliday={onToggleHoliday}
-                      onSave={async (times) => {
-                        await onUpdateDay(emp.id, emp.name, r.dateKey, times);
+                      onSave={(times) => {
+                        // 先關閉編輯列讓畫面即時更新，儲存在背景進行（updateDayPunch 已做樂觀更新）
                         setEditingDay(null);
+                        onUpdateDay(emp.id, emp.name, r.dateKey, times);
                       }}
                     />
                   )}
