@@ -443,12 +443,19 @@ export default function TimeClockApp() {
       try { return JSON.parse(value); } catch (e) { return fallback; }
     };
 
+    // 防止暫時性讀取到空清單（Apps Script 偶爾會回空）就把畫面上的資料清掉：
+    // 若原本已有資料、這次卻讀到空陣列，視為暫時性問題、保留原本的，避免畫面閃「尚無資料」
+    const keepIfTransientEmpty = (next, prev) =>
+      Array.isArray(next) && next.length === 0 && Array.isArray(prev) && prev.length > 0 ? prev : next;
+
     const emp = parse(raw.employees, []);
-    if (emp !== undefined) setEmployees(emp);
+    if (emp !== undefined) setEmployees((prev) => keepIfTransientEmpty(emp, prev));
 
     const pun = parse(raw.punches, []);
     // 若有本機打卡編輯正在背景寫回，暫時不要用伺服器資料覆蓋，避免剛改的內容閃回舊值
-    if (pun !== undefined && !punchesWriteInFlight.current) setPunches(pun);
+    if (pun !== undefined && !punchesWriteInFlight.current) {
+      setPunches((prev) => keepIfTransientEmpty(pun, prev));
+    }
 
     let hol = parse(raw.holidays, {});
     if (hol !== undefined) {
