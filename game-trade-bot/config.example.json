@@ -14,7 +14,7 @@
     "col_step": 118,
     "row_step": 118
   },
-  "max_items": 8,
+  "max_items": 7,
   "_quick": {
     "_說明": "記住兩視窗左上角的相對位移，供『快速校正』只指一個點用（= 交易起點 - 道具起點）。",
     "offset_trade_from_inv": [-324, 374]

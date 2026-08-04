@@ -102,7 +102,7 @@ def do_full_calibration():
     inv_rows = ask_int("右邊【道具背包】綠球區有幾『列』(橫排，只算有球的，不算最底下禮物格)", 4)
     tr_cols = ask_int("左邊【交易視窗】自己空格區有幾『欄』", 4)
     tr_rows = ask_int("左邊【交易視窗】自己空格區有幾『列』", 2)
-    max_items = ask_int("一次最多搬幾個", 8)
+    max_items = ask_int("一次最多搬幾個", 7)
 
     print("\n接下來只用滑鼠 + Enter（不用回終端機）。請依提示把滑鼠移到格子正中央後按 Enter。\n")
 

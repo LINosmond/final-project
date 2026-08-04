@@ -4,7 +4,7 @@
 
 流程（對應你的需求）：
   1. 啟動時拍一張照，找出右邊「道具」背包裡所有有綠色球（S.EXP）的格子。
-  2. 從這些球裡「隨機挑」不重複的 8 顆（可在 config.json 調整）作為固定清單。
+  2. 從這些球裡「隨機挑」不重複的 7 顆（可用 --count 或 config.json 調整）作為固定清單。
   3. 依序：左鍵點該球（拿起）→ 左鍵點交易視窗空格（放上）。
   （因為放上交易後背包的球不會消失，所以用啟動時那張照的固定清單，途中不再重新偵測。）
 
@@ -435,6 +435,7 @@ def main():
     parser.add_argument("--debug", action="store_true", help="另存 debug_view.png，畫出偵測結果")
     parser.add_argument("--fast", action="store_true", help="加速搬運（較快，通常仍穩）")
     parser.add_argument("--turbo", action="store_true", help="極速搬運（最快，太快可能有些沒點到）")
+    parser.add_argument("--count", type=int, default=None, help="這次搬幾顆（覆蓋 config 的 max_items）")
     args = parser.parse_args()
 
     cfg = load_config()
@@ -442,6 +443,9 @@ def main():
         apply_speed(cfg, "turbo")
     elif args.fast:
         apply_speed(cfg, "fast")
+    if args.count is not None:
+        cfg["max_items"] = args.count
+        print(f"這次最多搬 {args.count} 顆。")
 
     if args.now or keyboard is None:
         if keyboard is None and not args.now:
