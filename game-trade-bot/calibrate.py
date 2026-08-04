@@ -131,20 +131,21 @@ def do_full_calibration():
 # ---------------------------------------------------------------------------
 def do_quick_calibration(old):
     print("\n===== 快速校正 =====")
-    print("沿用上次的格子間距與欄列數，只要重新對一次位置。")
-    print("（前提：道具背包和交易視窗跟上次的相對位置一樣。若有移動過，請改用完整校正。）\n")
+    print("沿用上次的格子間距與欄列數，只要各指一個點重新對位：")
+    print("  1) 道具背包 左上角那一格   2) 交易視窗 左上角那一格\n")
 
-    inv_tl = capture_point("道具背包：左上角第一格 的正中央（只要這一個點）")
+    inv_tl = capture_point("道具背包：左上角第一格 的正中央")
+    tr_tl = capture_point("交易視窗：左上角第一格 的正中央")
 
     inventory = dict(old["inventory"])
     inventory["first_cell"] = inv_tl
 
-    offset = old.get("_quick", {}).get("offset_trade_from_inv", [0, 0])
     trade = dict(old["trade"])
-    trade["first_cell"] = [inv_tl[0] + offset[0], inv_tl[1] + offset[1]]
+    trade["first_cell"] = tr_tl
 
     max_items = old.get("max_items", 8)
-    print(f"  已依上次間距重建格陣：道具起點 {inventory['first_cell']}、交易起點 {trade['first_cell']}\n")
+    offset = [tr_tl[0] - inv_tl[0], tr_tl[1] - inv_tl[1]]  # 順便更新相對位移
+    print(f"  已依上次間距重建格陣：道具起點 {inv_tl}、交易起點 {tr_tl}\n")
     return inventory, trade, max_items, offset
 
 
@@ -212,7 +213,7 @@ def main():
         inventory, trade, max_items, offset = do_full_calibration()
     else:
         print("\n偵測到上次的設定。要用哪一種？")
-        print("  [Enter] 快速校正：只指『道具背包左上角』一個點，其他沿用上次（最快）")
+        print("  [Enter] 快速校正：只指『背包左上角』+『交易視窗左上角』兩個點，其他沿用上次（最快）")
         print("  [F]     完整校正：重新指所有角落（換了視窗位置或解析度時用）")
         choice = input("選擇（直接 Enter = 快速）：").strip().lower()
         if choice == "f":
