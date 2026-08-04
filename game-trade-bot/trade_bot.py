@@ -9,10 +9,10 @@
   4. 重複，最多放 8 個（可在 config.json 調整）。
 
 熱鍵（系統級，焦點在遊戲上也有效）：
-  F1 = 立刻開始搬運
-  F2 = 立刻停止；若目前沒在搬，再按 F2 就離開程式
-  F3 = 連點右鍵開／關（在滑鼠當前位置一直點右鍵，再按一次停止）
-  F4 = 左鍵依序點兩個位置（第一次按會請你設定，之後記住）；Shift+F4 重新設定
+  F1 = 左鍵依序點兩個位置（第一次按會請你設定，之後記住）；Shift+F1 重新設定
+  F2 = 連點右鍵開／關（在滑鼠當前位置一直點右鍵，再按一次停止）
+  F3 = 立刻開始搬運
+  F4 = 停止所有（停搬運＋停連點右鍵；都沒在跑時再按一次離開程式）
 
 偵測方式：用顏色判斷。綠色球是偏黃綠／橄欖綠，空格是深藍色，
 兩者差很多，所以用 HSV 色相範圍就能分辨哪格有球。
@@ -22,8 +22,8 @@
   - 終端機按 Ctrl + C 也能結束程式。
 
 用法：
-  python trade_bot.py            開啟熱鍵待命（按 F1 開始 / F2 停止）
-  python trade_bot.py --now      不等 F1，倒數後直接執行一次
+  python trade_bot.py            開啟熱鍵待命（F3 開始搬運 / F4 停止所有）
+  python trade_bot.py --now      不等熱鍵，倒數後直接執行一次搬運
   python trade_bot.py --dry-run  只偵測、不點擊（滑鼠會移過去給你看，驗證有沒有抓對）
   python trade_bot.py --debug    另外存一張 debug 圖，畫出每格有沒有抓到球
 """
@@ -65,7 +65,7 @@ CONFIG_PATH = os.path.join(HERE, "config.json")
 stop_event = threading.Event()     # 被設定 = 立刻停止目前這次搬運
 exit_event = threading.Event()     # 被設定 = 整個程式結束
 busy_lock = threading.Lock()       # 確保同時只跑一次搬運
-f3_active = threading.Event()      # 被設定 = F3 連點右鍵進行中
+rightclick_active = threading.Event()  # 被設定 = 連點右鍵(F2)進行中
 
 
 # ---------------------------------------------------------------------------
@@ -268,53 +268,81 @@ def do_run(cfg, dry_run=False, debug=False):
 
 
 # ---------------------------------------------------------------------------
-# 熱鍵
+# 熱鍵設定（新版對應）
+#   F1 = 左鍵依序點兩個位置（Shift+F1 重新設定）
+#   F2 = 連點右鍵 開／關
+#   F3 = 立刻開始搬運
+#   F4 = 停止所有（停搬運＋停連點右鍵；都沒在跑時再按一次離開程式）
 # ---------------------------------------------------------------------------
-def on_f1(cfg, dry_run, debug):
+
+# 讀取設定（相容舊 config 的鍵名）
+def two_click_cfg(cfg):
+    return cfg.get("two_click") or cfg.get("f4") or {}
+
+
+def rightclick_interval(cfg):
+    t = cfg["timing"]
+    return t.get("rightclick_interval", t.get("f3_interval", 0.1))
+
+
+def two_click_gap(cfg):
+    t = cfg["timing"]
+    return t.get("two_click_gap", t.get("f4_gap", 0.15))
+
+
+# ---------- F3：立刻開始搬運 ----------
+def on_start_trade(cfg, dry_run, debug):
     if busy_lock.locked():
-        print("（正在搬運中，忽略這次 F1）")
+        print("（正在搬運中，忽略這次 F3）")
         return
     threading.Thread(target=do_run, args=(cfg, dry_run, debug), daemon=True).start()
 
 
-def on_f2():
+# ---------- F4：停止所有 ----------
+def on_stop_all():
+    stopped = False
     if busy_lock.locked():
-        print("F2：立刻停止搬運…")
         stop_event.set()
+        stopped = True
+    if rightclick_active.is_set():
+        rightclick_active.clear()
+        stopped = True
+    if stopped:
+        print("F4：停止所有動作。")
     else:
-        print("F2：離開程式。")
+        print("F4：目前沒有進行中的動作，離開程式。")
         exit_event.set()
 
 
-# ---------- F3：連點右鍵（開關） ----------
-def f3_loop(cfg):
-    interval = cfg["timing"].get("f3_interval", 0.1)
+# ---------- F2：連點右鍵（開關） ----------
+def rightclick_loop(cfg):
+    interval = rightclick_interval(cfg)
     try:
-        while f3_active.is_set() and not exit_event.is_set():
+        while rightclick_active.is_set() and not exit_event.is_set():
             pyautogui.click(button="right")
             end = time.time() + interval
             while time.time() < end:
-                if not f3_active.is_set() or exit_event.is_set():
+                if not rightclick_active.is_set() or exit_event.is_set():
                     return
                 time.sleep(0.01)
     except pyautogui.FailSafeException:
-        print("F3：偵測到滑鼠到左上角，已停止連點右鍵。")
-        f3_active.clear()
+        print("F2：偵測到滑鼠到左上角，已停止連點右鍵。")
+        rightclick_active.clear()
 
 
-def on_f3(cfg):
-    if f3_active.is_set():
-        f3_active.clear()
-        print("F3：停止連點右鍵。")
+def on_toggle_rightclick(cfg):
+    if rightclick_active.is_set():
+        rightclick_active.clear()
+        print("F2：停止連點右鍵。")
     else:
-        f3_active.set()
-        print("F3：開始連點右鍵（滑鼠停在要點的地方；再按 F3 停止）。")
-        threading.Thread(target=f3_loop, args=(cfg,), daemon=True).start()
+        rightclick_active.set()
+        print("F2：開始連點右鍵（滑鼠停在要點的地方；再按 F2 或 F4 停止）。")
+        threading.Thread(target=rightclick_loop, args=(cfg,), daemon=True).start()
 
 
-# ---------- F4：左鍵依序點兩個位置 ----------
+# ---------- F1：左鍵依序點兩個位置 ----------
 def wait_enter_press():
-    """輪詢等一次新的 Enter 按下（給 F4 設定用，不與熱鍵衝突）。回傳 False 代表程式要結束。"""
+    """輪詢等一次新的 Enter 按下（給設定用，不與熱鍵衝突）。回傳 False 代表程式要結束。"""
     while keyboard.is_pressed("enter"):        # 先等放開
         if exit_event.is_set():
             return False
@@ -328,11 +356,11 @@ def wait_enter_press():
     return True
 
 
-def record_f4(cfg):
+def record_two_click(cfg):
     if keyboard is None:
-        print("F4 設定需要 keyboard 套件。")
+        print("F1 兩點設定需要 keyboard 套件。")
         return
-    print("\n== 設定 F4 的兩個左鍵位置 ==")
+    print("\n== 設定 F1 的兩個左鍵位置 ==")
     print("把滑鼠移到【位置1】後按 Enter…")
     if not wait_enter_press():
         return
@@ -344,53 +372,54 @@ def record_f4(cfg):
         return
     b = list(pyautogui.position())
     print(f"  位置2 = {b}")
-    cfg["f4"] = {"pos_a": a, "pos_b": b}
+    cfg["two_click"] = {"pos_a": a, "pos_b": b}
+    cfg.pop("f4", None)  # 清掉舊鍵名
     save_config(cfg)
-    print("F4 設定完成並已記住。之後按 F4 就會左鍵依序點這兩個位置；要重設按 Shift+F4。\n")
+    print("F1 兩點設定完成並已記住。之後按 F1 就會左鍵依序點這兩個位置；要重設按 Shift+F1。\n")
 
 
-def do_f4_clicks(cfg):
-    a = cfg["f4"]["pos_a"]
-    b = cfg["f4"]["pos_b"]
+def do_two_click(cfg):
+    pos = two_click_cfg(cfg)
+    a, b = pos["pos_a"], pos["pos_b"]
     d = cfg["timing"].get("move_duration", 0.15)
-    gap = cfg["timing"].get("f4_gap", 0.15)
+    gap = two_click_gap(cfg)
     try:
         pyautogui.moveTo(a[0], a[1], duration=d)
         pyautogui.click()
         time.sleep(gap)
         pyautogui.moveTo(b[0], b[1], duration=d)
         pyautogui.click()
-        print(f"F4：已左鍵點 {a} → {b}")
+        print(f"F1：已左鍵點 {a} → {b}")
     except pyautogui.FailSafeException:
-        print("F4：偵測到滑鼠到左上角，已中止。")
+        print("F1：偵測到滑鼠到左上角，已中止。")
 
 
-def on_f4(cfg):
-    f4 = cfg.get("f4") or {}
-    if not f4.get("pos_a") or not f4.get("pos_b"):
-        threading.Thread(target=record_f4, args=(cfg,), daemon=True).start()
+def on_two_click(cfg):
+    pos = two_click_cfg(cfg)
+    if not pos.get("pos_a") or not pos.get("pos_b"):
+        threading.Thread(target=record_two_click, args=(cfg,), daemon=True).start()
     else:
-        threading.Thread(target=do_f4_clicks, args=(cfg,), daemon=True).start()
+        threading.Thread(target=do_two_click, args=(cfg,), daemon=True).start()
 
 
-def on_shift_f4(cfg):
-    threading.Thread(target=record_f4, args=(cfg,), daemon=True).start()
+def on_reset_two_click(cfg):
+    threading.Thread(target=record_two_click, args=(cfg,), daemon=True).start()
 
 
 def hotkey_loop(cfg, dry_run, debug):
-    keyboard.add_hotkey("f1", lambda: on_f1(cfg, dry_run, debug))
-    keyboard.add_hotkey("f2", on_f2)
-    keyboard.add_hotkey("f3", lambda: on_f3(cfg))
-    keyboard.add_hotkey("f4", lambda: on_f4(cfg))
-    keyboard.add_hotkey("shift+f4", lambda: on_shift_f4(cfg))
-    f4_set = bool((cfg.get("f4") or {}).get("pos_a"))
+    keyboard.add_hotkey("f1", lambda: on_two_click(cfg))
+    keyboard.add_hotkey("shift+f1", lambda: on_reset_two_click(cfg))
+    keyboard.add_hotkey("f2", lambda: on_toggle_rightclick(cfg))
+    keyboard.add_hotkey("f3", lambda: on_start_trade(cfg, dry_run, debug))
+    keyboard.add_hotkey("f4", on_stop_all)
+    two_set = bool(two_click_cfg(cfg).get("pos_a"))
     print("=" * 52)
     print("  熱鍵待命中：")
-    print("    F1 = 立刻開始搬運")
-    print("    F2 = 立刻停止（沒在搬時，再按 F2 離開程式）")
-    print("    F3 = 連點右鍵開／關（滑鼠停在要點的位置）")
-    print("    F4 = 左鍵依序點兩個位置" + ("" if f4_set else "（第一次按會先請你設定）"))
-    print("    Shift+F4 = 重新設定 F4 的兩個位置")
+    print("    F1 = 左鍵依序點兩個位置" + ("" if two_set else "（第一次按會先請你設定）"))
+    print("    Shift+F1 = 重新設定 F1 的兩個位置")
+    print("    F2 = 連點右鍵開／關（滑鼠停在要點的位置）")
+    print("    F3 = 立刻開始搬運")
+    print("    F4 = 停止所有（都沒在跑時，再按 F4 離開程式）")
     print("    （滑鼠甩到螢幕左上角 = 緊急停止；Ctrl+C 也能結束）")
     print("=" * 52)
     try:
@@ -400,7 +429,7 @@ def hotkey_loop(cfg, dry_run, debug):
         pass
     finally:
         stop_event.set()
-        f3_active.clear()
+        rightclick_active.clear()
         try:
             keyboard.clear_all_hotkeys()
         except Exception:

@@ -161,15 +161,17 @@ def build_config(inventory, trade, max_items, offset, old=None):
     timing = (old or {}).get("timing", {
         "start_countdown": 3, "move_duration": 0.15,
         "click_delay": 0.35, "between_items": 0.5,
-        "f3_interval": 0.1, "f4_gap": 0.15,
+        "rightclick_interval": 0.1, "two_click_gap": 0.15,
     })
-    timing.setdefault("f3_interval", 0.1)   # F3 連點右鍵的間隔（秒）
-    timing.setdefault("f4_gap", 0.15)       # F4 兩次左鍵之間的間隔（秒）
+    timing.setdefault("rightclick_interval", timing.pop("f3_interval", 0.1))  # F2 連點右鍵間隔（秒）
+    timing.setdefault("two_click_gap", timing.pop("f4_gap", 0.15))            # F1 兩次左鍵間隔（秒）
     quantity = (old or {}).get("quantity", {
         "_說明": "若點道具後會跳『數量』視窗，把 confirm_with_enter 改成 true，會自動按 Enter 確認。",
         "confirm_with_enter": False, "enter_delay": 0.3,
     })
-    f4 = (old or {}).get("f4") or {"pos_a": None, "pos_b": None}
+    # 相容舊鍵名 f4
+    two_click = (old or {}).get("two_click") or (old or {}).get("f4") or {"pos_a": None, "pos_b": None}
+    two_click.pop("_說明", None)
     return {
         "inventory": inventory,
         "trade": trade,
@@ -178,7 +180,11 @@ def build_config(inventory, trade, max_items, offset, old=None):
             "_說明": "記住兩視窗左上角的相對位移，供『快速校正』只指一個點用。",
             "offset_trade_from_inv": offset,
         },
-        "f4": f4,
+        "two_click": {
+            "_說明": "F1 左鍵依序點的兩個位置；null 代表還沒設定，第一次按 F1 會請你設定。",
+            "pos_a": two_click.get("pos_a"),
+            "pos_b": two_click.get("pos_b"),
+        },
         "detection": detection,
         "timing": timing,
         "quantity": quantity,
