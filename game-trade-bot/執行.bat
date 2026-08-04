@@ -1,4 +1,7 @@
 @echo off
 cd /d "%~dp0"
-python trade_bot.py --turbo --count 7
+echo === Checking for updates (git pull) ===
+git pull
+echo.
+call run.bat
 pause
