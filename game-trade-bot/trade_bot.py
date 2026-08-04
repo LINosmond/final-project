@@ -58,6 +58,59 @@ except ImportError:
     keyboard = None
 
 
+# ---------------------------------------------------------------------------
+# 底層點擊：用 Windows SendInput 送滑鼠事件（比 pyautogui 更能被遊戲接受）
+# 有些遊戲會忽略一般模擬點擊；SendInput + 真實按壓時間通常收得到。
+# 非 Windows（或載入失敗）時自動退回 pyautogui。
+# ---------------------------------------------------------------------------
+_USE_SENDINPUT = False
+if sys.platform == "win32":
+    try:
+        import ctypes
+
+        _ULONG_PTR = ctypes.POINTER(ctypes.c_ulong)
+
+        class _MOUSEINPUT(ctypes.Structure):
+            _fields_ = [("dx", ctypes.c_long), ("dy", ctypes.c_long),
+                        ("mouseData", ctypes.c_ulong), ("dwFlags", ctypes.c_ulong),
+                        ("time", ctypes.c_ulong), ("dwExtraInfo", _ULONG_PTR)]
+
+        class _INPUT(ctypes.Structure):
+            class _I(ctypes.Union):
+                _fields_ = [("mi", _MOUSEINPUT)]
+            _anonymous_ = ("i",)
+            _fields_ = [("type", ctypes.c_ulong), ("i", _I)]
+
+        _MOUSEEVENTF = {
+            "ldown": 0x0002, "lup": 0x0004,
+            "rdown": 0x0008, "rup": 0x0010,
+        }
+
+        def _send_mouse(flag):
+            extra = ctypes.c_ulong(0)
+            mi = _MOUSEINPUT(0, 0, 0, flag, 0, ctypes.pointer(extra))
+            inp = _INPUT(0, _INPUT._I(mi))  # type 0 = INPUT_MOUSE
+            ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+
+        def _set_cursor(x, y):
+            ctypes.windll.user32.SetCursorPos(int(x), int(y))
+
+        _USE_SENDINPUT = True
+    except Exception:
+        _USE_SENDINPUT = False
+
+
+def press_click(button="left", hold=0.03):
+    """在滑鼠目前位置按一下（按下→停 hold 秒→放開）。"""
+    if _USE_SENDINPUT:
+        down, up = ("ldown", "lup") if button == "left" else ("rdown", "rup")
+        _send_mouse(_MOUSEEVENTF[down])
+        time.sleep(hold)
+        _send_mouse(_MOUSEEVENTF[up])
+    else:
+        pyautogui.click(button=button)
+
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
 
@@ -175,7 +228,8 @@ def sleep_interruptible(seconds):
 
 def click(x, y, cfg):
     pyautogui.moveTo(x, y, duration=cfg["timing"]["move_duration"])
-    pyautogui.click()
+    time.sleep(0.02)
+    press_click("left", cfg["timing"].get("click_hold", 0.03))
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +374,7 @@ def rightclick_loop(cfg):
     interval = rightclick_interval(cfg)
     try:
         while rightclick_active.is_set() and not exit_event.is_set():
-            pyautogui.click(button="right")
+            press_click("right", cfg["timing"].get("click_hold", 0.03))
             end = time.time() + interval
             while time.time() < end:
                 if not rightclick_active.is_set() or exit_event.is_set():
@@ -392,11 +446,14 @@ def do_two_click(cfg):
         a, b = pos["pos_a"], pos["pos_b"]
         d = cfg["timing"].get("move_duration", 0.15)
         gap = two_click_gap(cfg)
+        hold = cfg["timing"].get("click_hold", 0.03)
         pyautogui.moveTo(a[0], a[1], duration=d)
-        pyautogui.click()
+        time.sleep(0.02)
+        press_click("left", hold)
         time.sleep(gap)
         pyautogui.moveTo(b[0], b[1], duration=d)
-        pyautogui.click()
+        time.sleep(0.02)
+        press_click("left", hold)
         print(f"F1：已左鍵點 {a} → {b}")
     except pyautogui.FailSafeException:
         print("F1：偵測到滑鼠到左上角，已中止。")
@@ -424,6 +481,7 @@ def hotkey_loop(cfg, dry_run, debug):
     keyboard.add_hotkey("f4", on_stop_all)
     two_set = bool(two_click_cfg(cfg).get("pos_a"))
     print("=" * 52)
+    print("  點擊方式：" + ("Windows SendInput（遊戲相容）" if _USE_SENDINPUT else "pyautogui"))
     print("  熱鍵待命中：")
     print("    F1 = 左鍵依序點兩個位置" + ("" if two_set else "（第一次按會先請你設定）"))
     print("    Shift+F1 = 重新設定 F1 的兩個位置")

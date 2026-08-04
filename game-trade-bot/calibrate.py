@@ -162,9 +162,11 @@ def build_config(inventory, trade, max_items, offset, old=None):
         "start_countdown": 3, "move_duration": 0.15,
         "click_delay": 0.35, "between_items": 0.5,
         "rightclick_interval": 0.1, "two_click_gap": 0.15,
+        "click_hold": 0.03,
     })
     timing.setdefault("rightclick_interval", timing.pop("f3_interval", 0.1))  # F2 連點右鍵間隔（秒）
     timing.setdefault("two_click_gap", timing.pop("f4_gap", 0.15))            # F1 兩次左鍵間隔（秒）
+    timing.setdefault("click_hold", 0.03)  # 每次點擊「按下→放開」之間停留（秒），太快遊戲收不到就調大
     quantity = (old or {}).get("quantity", {
         "_說明": "若點道具後會跳『數量』視窗，把 confirm_with_enter 改成 true，會自動按 Enter 確認。",
         "confirm_with_enter": False, "enter_delay": 0.3,
