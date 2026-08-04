@@ -1,0 +1,5 @@
+# 使用者自己校正產生的，不進版控
+config.json
+debug_view.png
+__pycache__/
+*.pyc

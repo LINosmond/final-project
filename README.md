@@ -7,5 +7,6 @@
 | [`TimeClockWeb/`](TimeClockWeb/) | 員工打卡系統（React 靜態網站，資料庫用 Google 試算表） |
 | [`stock-data-analysis/`](stock-data-analysis/) | 股票資料分析 Jupyter notebooks + 資料檔（xlsx） |
 | [`launcher/`](launcher/) | 一鍵啟動器：雙擊開啟自訂清單中的程式／網址／檔案（Windows） |
+| [`game-trade-bot/`](game-trade-bot/) | 遊戲交易自動精靈：自動偵測背包綠球並搬到交易視窗（滑鼠自動化，Windows） |
 
 各資料夾內另有自己的說明檔，詳細用法看裡面的 README。

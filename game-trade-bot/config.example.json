@@ -1,0 +1,36 @@
+{
+  "_說明": "這是範例。實際請跑 python calibrate.py 產生你自己的 config.json，座標才會準。下面的座標只是示意，不會剛好對應你的螢幕。",
+  "inventory": {
+    "first_cell": [1034, 326],
+    "cols": 10,
+    "rows": 4,
+    "col_step": 105,
+    "row_step": 102
+  },
+  "trade": {
+    "first_cell": [710, 700],
+    "cols": 4,
+    "rows": 2,
+    "col_step": 118,
+    "row_step": 118
+  },
+  "max_items": 8,
+  "detection": {
+    "hue_min": 25,
+    "hue_max": 95,
+    "sat_min": 60,
+    "val_min": 60,
+    "fill_ratio": 0.12,
+    "sample_size": 40
+  },
+  "timing": {
+    "start_countdown": 3,
+    "move_duration": 0.15,
+    "click_delay": 0.35,
+    "between_items": 0.5
+  },
+  "quantity": {
+    "confirm_with_enter": false,
+    "enter_delay": 0.3
+  }
+}
