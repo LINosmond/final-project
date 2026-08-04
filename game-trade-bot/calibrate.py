@@ -2,34 +2,66 @@
 """
 校正工具 —— 產生 config.json
 
-因為每個人的螢幕解析度、遊戲視窗位置都不一樣，座標一定要先校正過，
-自動精靈才點得準。這支工具用「滑鼠指位置 + 按 Enter」的方式，
-只要指幾個角落，就會自動算出整個格陣，不用自己算座標。
+兩種模式：
+
+【完整校正】第一次用，或換了螢幕解析度／視窗位置時用。
+  會請你指出每個區域的三個角落，算出整個格陣的間距。
+
+【快速校正】做過一次完整校正後，程式會記住格子間距與兩個視窗的相對位置。
+  之後只要指「道具背包左上角那一格」按一下 Enter，就能重新對位，開始使用。
+
+記點方式：把滑鼠移到格子正中央，直接按 Enter 就記錄（不用切回終端機）。
+  ——這需要 keyboard 套件（requirements.txt 已含）。若按 Enter 沒反應，
+    請用「系統管理員身分」執行，或它會自動退回「回終端機按 Enter」的舊方式。
 
 用法：
-  python calibrate.py
-
-過程中會請你把滑鼠移到指定位置，然後回終端機按 Enter。
-全部指完會存成 config.json，之後就能跑 trade_bot.py。
+  python calibrate.py          有舊設定就問你要快速還是完整；沒有就直接完整校正
+  python calibrate.py --full   強制完整校正
 """
 
+import argparse
 import json
 import os
 import sys
+import time
 
 try:
     import pyautogui
 except ImportError:
     sys.exit("缺少套件 pyautogui，請先執行：pip install -r requirements.txt")
 
+try:
+    import keyboard  # 用來全域攔截 Enter，滑鼠放好直接按就記點
+except ImportError:
+    keyboard = None
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
 
 
-def capture(prompt):
-    """顯示提示，等使用者把滑鼠移到定位後按 Enter，回傳當下滑鼠座標。"""
-    input(f"  → {prompt}\n    移好滑鼠後，回這裡按 Enter…")
-    x, y = pyautogui.position()
+# ---------------------------------------------------------------------------
+# 記點：滑鼠放好，按 Enter 就記錄（不用回終端機）
+# ---------------------------------------------------------------------------
+def capture_point(prompt):
+    print(f"  → {prompt}")
+    if keyboard is not None:
+        print("    把滑鼠移到格子正中央後，直接按 Enter 記錄…")
+        try:
+            # 先等 Enter 放開，避免沿用上一個動作殘留的 Enter
+            while keyboard.is_pressed("enter"):
+                time.sleep(0.01)
+            keyboard.wait("enter")           # 全域等待新的一次 Enter
+            x, y = pyautogui.position()
+            while keyboard.is_pressed("enter"):
+                time.sleep(0.01)
+            time.sleep(0.15)                 # 去彈跳，避免一次記到兩點
+        except Exception:
+            # keyboard 有問題（例如權限不足）就退回終端機方式
+            input("    （熱鍵無法使用）移好滑鼠後，回這裡按 Enter…")
+            x, y = pyautogui.position()
+    else:
+        input("    移好滑鼠後，回這裡按 Enter…")
+        x, y = pyautogui.position()
     print(f"    已記錄：({x}, {y})\n")
     return [x, y]
 
@@ -45,93 +77,162 @@ def ask_int(prompt, default):
         return default
 
 
-def calibrate_grid(title, default_cols, default_rows):
-    print(f"\n===== 校正：{title} =====")
-    cols = ask_int("這個區域有幾『欄』(直排數量)", default_cols)
-    rows = ask_int("這個區域有幾『列』(橫排數量)", default_rows)
-
-    tl = capture(f"把滑鼠移到【左上角第一格】的正中央")
-    tr = capture(f"把滑鼠移到【第一列最右邊那格】的正中央")
-    bl = capture(f"把滑鼠移到【第一欄最下面那格】的正中央")
-
-    col_step = (tr[0] - tl[0]) / (cols - 1) if cols > 1 else 0
-    row_step = (bl[1] - tl[1]) / (rows - 1) if rows > 1 else 0
-
+# ---------------------------------------------------------------------------
+# 完整校正：指三個角落，算出間距
+# ---------------------------------------------------------------------------
+def full_calibrate_grid(title, first_cell, tr, bl, cols, rows):
+    col_step = (tr[0] - first_cell[0]) / (cols - 1) if cols > 1 else 0
+    row_step = (bl[1] - first_cell[1]) / (rows - 1) if rows > 1 else 0
     grid = {
-        "first_cell": tl,
+        "first_cell": first_cell,
         "cols": cols,
         "rows": rows,
         "col_step": round(col_step, 2),
         "row_step": round(row_step, 2),
     }
-    print(f"  {title} 完成：起點 {tl}，每欄間距 {grid['col_step']}，每列間距 {grid['row_step']}")
+    print(f"  {title}：起點 {first_cell}，每欄間距 {grid['col_step']}，每列間距 {grid['row_step']}\n")
     return grid
 
 
-def main():
-    print("=" * 60)
-    print("  遊戲交易自動精靈 —— 校正工具")
-    print("=" * 60)
-    print(
-        "\n請先把遊戲畫面切到『交易視窗 + 道具背包同時打開』的狀態，"
-        "\n讓兩個視窗都不要被擋住。準備好後按 Enter 開始。"
-    )
-    input()
+def do_full_calibration():
+    print("\n===== 完整校正 =====")
+    print("先在終端機回答幾個數字，等一下就只用『滑鼠 + Enter』指角落。\n")
 
-    print("提示：接下來每一步，先把滑鼠移到指定的『格子正中央』，再回終端機按 Enter。")
+    inv_cols = ask_int("右邊【道具背包】綠球區有幾『欄』(直排)", 10)
+    inv_rows = ask_int("右邊【道具背包】綠球區有幾『列』(橫排，只算有球的，不算最底下禮物格)", 4)
+    tr_cols = ask_int("左邊【交易視窗】自己空格區有幾『欄』", 4)
+    tr_rows = ask_int("左邊【交易視窗】自己空格區有幾『列』", 2)
+    max_items = ask_int("一次最多搬幾個", 8)
 
-    # 右邊：道具背包（有綠球那一大片）
-    inventory = calibrate_grid(
-        "右邊【道具背包】綠球區（只框有球的那幾列，最底下的禮物格不用算）",
-        default_cols=10, default_rows=4,
-    )
+    print("\n接下來只用滑鼠 + Enter（不用回終端機）。請依提示把滑鼠移到格子正中央後按 Enter。\n")
 
-    # 左邊：交易視窗自己這一側（要放球的 8 格）
-    trade = calibrate_grid(
-        "左邊【交易視窗】自己的空格區（你那個角色名字底下、要放球的格子）",
-        default_cols=4, default_rows=2,
-    )
+    print("— 右邊【道具背包】—")
+    inv_tl = capture_point("道具背包：左上角第一格 的正中央")
+    inv_tr = capture_point("道具背包：第一列最右邊那格 的正中央")
+    inv_bl = capture_point("道具背包：第一欄最下面那格 的正中央")
 
-    max_items = ask_int("\n一次最多搬幾個", 8)
+    print("— 左邊【交易視窗】自己的空格 —")
+    tr_tl = capture_point("交易視窗：左上角第一格 的正中央")
+    tr_tr = capture_point("交易視窗：第一列最右邊那格 的正中央")
+    tr_bl = capture_point("交易視窗：第一欄最下面那格 的正中央")
 
-    config = {
+    inventory = full_calibrate_grid("道具背包", inv_tl, inv_tr, inv_bl, inv_cols, inv_rows)
+    trade = full_calibrate_grid("交易視窗", tr_tl, tr_tr, tr_bl, tr_cols, tr_rows)
+
+    # 記住兩視窗左上角的相對位移，之後快速校正只要指一個點
+    offset = [trade["first_cell"][0] - inventory["first_cell"][0],
+              trade["first_cell"][1] - inventory["first_cell"][1]]
+
+    return inventory, trade, max_items, offset
+
+
+# ---------------------------------------------------------------------------
+# 快速校正：只指道具背包左上角，其他沿用上次
+# ---------------------------------------------------------------------------
+def do_quick_calibration(old):
+    print("\n===== 快速校正 =====")
+    print("沿用上次的格子間距與欄列數，只要重新對一次位置。")
+    print("（前提：道具背包和交易視窗跟上次的相對位置一樣。若有移動過，請改用完整校正。）\n")
+
+    inv_tl = capture_point("道具背包：左上角第一格 的正中央（只要這一個點）")
+
+    inventory = dict(old["inventory"])
+    inventory["first_cell"] = inv_tl
+
+    offset = old.get("_quick", {}).get("offset_trade_from_inv", [0, 0])
+    trade = dict(old["trade"])
+    trade["first_cell"] = [inv_tl[0] + offset[0], inv_tl[1] + offset[1]]
+
+    max_items = old.get("max_items", 8)
+    print(f"  已依上次間距重建格陣：道具起點 {inventory['first_cell']}、交易起點 {trade['first_cell']}\n")
+    return inventory, trade, max_items, offset
+
+
+# ---------------------------------------------------------------------------
+# 組裝並存檔
+# ---------------------------------------------------------------------------
+def build_config(inventory, trade, max_items, offset, old=None):
+    detection = (old or {}).get("detection", {
+        "_說明": "用顏色抓綠球。若抓不到或誤判，微調 hue/sat/val/fill_ratio。可跑 trade_bot.py --debug 觀察。",
+        "hue_min": 25, "hue_max": 95, "sat_min": 60, "val_min": 60,
+        "fill_ratio": 0.12, "sample_size": 40,
+    })
+    timing = (old or {}).get("timing", {
+        "start_countdown": 3, "move_duration": 0.15,
+        "click_delay": 0.35, "between_items": 0.5,
+    })
+    quantity = (old or {}).get("quantity", {
+        "_說明": "若點道具後會跳『數量』視窗，把 confirm_with_enter 改成 true，會自動按 Enter 確認。",
+        "confirm_with_enter": False, "enter_delay": 0.3,
+    })
+    return {
         "inventory": inventory,
         "trade": trade,
         "max_items": max_items,
-        "detection": {
-            "_說明": "用顏色抓綠球。若抓不到或誤判，微調 hue/sat/val/fill_ratio。可跑 trade_bot.py --debug 觀察。",
-            "hue_min": 25,
-            "hue_max": 95,
-            "sat_min": 60,
-            "val_min": 60,
-            "fill_ratio": 0.12,
-            "sample_size": 40
+        "_quick": {
+            "_說明": "記住兩視窗左上角的相對位移，供『快速校正』只指一個點用。",
+            "offset_trade_from_inv": offset,
         },
-        "timing": {
-            "start_countdown": 3,
-            "move_duration": 0.15,
-            "click_delay": 0.35,
-            "between_items": 0.5
-        },
-        "quantity": {
-            "_說明": "若點道具後會跳『數量』視窗，把 confirm_with_enter 改成 true，會自動按 Enter 確認。",
-            "confirm_with_enter": False,
-            "enter_delay": 0.3
-        }
+        "detection": detection,
+        "timing": timing,
+        "quantity": quantity,
     }
 
+
+def load_old():
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return None
+    return None
+
+
+def main():
+    parser = argparse.ArgumentParser(description="校正工具")
+    parser.add_argument("--full", action="store_true", help="強制完整校正")
+    args = parser.parse_args()
+
+    print("=" * 60)
+    print("  遊戲交易自動精靈 —— 校正工具")
+    print("=" * 60)
+    if keyboard is None:
+        print("（提醒：沒裝 keyboard 套件，記點要回終端機按 Enter。想要放好滑鼠直接按 Enter，"
+              "請先 pip install keyboard）")
+    print("\n請先把遊戲切到『交易視窗 + 道具背包同時打開、都沒被擋住』的狀態。")
+
+    old = load_old()
+    can_quick = bool(old and old.get("_quick", {}).get("offset_trade_from_inv"))
+
+    if args.full or not can_quick:
+        if not can_quick and old:
+            print("（舊設定沒有間距資料，這次先做一次完整校正。）")
+        input("\n準備好後按 Enter 開始…")
+        inventory, trade, max_items, offset = do_full_calibration()
+    else:
+        print("\n偵測到上次的設定。要用哪一種？")
+        print("  [Enter] 快速校正：只指『道具背包左上角』一個點，其他沿用上次（最快）")
+        print("  [F]     完整校正：重新指所有角落（換了視窗位置或解析度時用）")
+        choice = input("選擇（直接 Enter = 快速）：").strip().lower()
+        if choice == "f":
+            inventory, trade, max_items, offset = do_full_calibration()
+        else:
+            inventory, trade, max_items, offset = do_quick_calibration(old)
+
+    config = build_config(inventory, trade, max_items, offset, old)
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
 
-    print("\n" + "=" * 60)
+    print("=" * 60)
     print(f"已存好設定：{CONFIG_PATH}")
     print("=" * 60)
     print(
-        "\n下一步建議先『空跑』確認有沒有抓對，不會真的點：\n"
+        "\n建議先『空跑』確認有沒有抓對（不會真的點）：\n"
         "  python trade_bot.py --dry-run\n\n"
-        "順便看偵測圖：\n"
+        "看偵測圖：\n"
         "  python trade_bot.py --debug\n\n"
-        "都正常後，正式執行：\n"
+        "正式執行（按 F1 開始 / F2 停止）：\n"
         "  python trade_bot.py\n"
     )
 
