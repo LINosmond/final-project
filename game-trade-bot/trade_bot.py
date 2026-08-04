@@ -9,8 +9,8 @@
   （因為放上交易後背包的球不會消失，所以用啟動時那張照的固定清單，途中不再重新偵測。）
 
 熱鍵（系統級，焦點在遊戲上也有效）：
-  F1 = 立刻開始搬運（7 顆）
-  F2 = 立刻開始搬運（8 顆）
+  F1 = 開始搬運（7 顆）；搬運中再按一次 = 停止
+  F2 = 開始搬運（8 顆）；搬運中再按一次 = 停止
   F3 = 連點右鍵開／關（在滑鼠當前位置一直點右鍵，再按一次停止）
 
 偵測方式：用顏色判斷。綠色球是偏黃綠／橄欖綠，空格是深藍色，
@@ -329,10 +329,11 @@ def rightclick_interval(cfg):
     return t.get("rightclick_interval", t.get("f3_interval", 0.1))
 
 
-# ---------- F1 / F2：立刻開始搬運（不同顆數） ----------
+# ---------- F1 / F2：開始搬運（不同顆數）；搬運中再按一次就停 ----------
 def on_start_trade(cfg, dry_run, debug, count):
     if busy_lock.locked():
-        print("（正在搬運中，忽略這次）")
+        stop_event.set()
+        print("停止搬運。")
         return
     threading.Thread(target=do_run, args=(cfg, dry_run, debug, count), daemon=True).start()
 
@@ -370,8 +371,8 @@ def hotkey_loop(cfg, dry_run, debug):
     print("=" * 52)
     print("  點擊方式：" + ("Windows SendInput（遊戲相容）" if _USE_SENDINPUT else "pyautogui"))
     print("  熱鍵待命中：")
-    print(f"    F1 = 立刻開始搬運（{F1_COUNT} 顆）")
-    print(f"    F2 = 立刻開始搬運（{F2_COUNT} 顆）")
+    print(f"    F1 = 開始搬運（{F1_COUNT} 顆）；搬運中再按一次 = 停止")
+    print(f"    F2 = 開始搬運（{F2_COUNT} 顆）；搬運中再按一次 = 停止")
     print("    F3 = 連點右鍵開／關（滑鼠停在要點的位置）")
     print("    （滑鼠甩到螢幕左上角 = 緊急停止；要結束程式關掉視窗或 Ctrl+C）")
     print("=" * 52)
