@@ -90,6 +90,12 @@ python trade_bot.py --debug
 
 > 想不靠熱鍵、倒數後直接跑一次，可用：`python trade_bot.py --now`
 
+**搬運（F3）太慢？加速：**
+- 雙擊的 **`執行.bat` 已預設加速**（`--fast`），`git pull` 更新後就是快的。
+- 手動跑也可加：`python trade_bot.py --fast`（較快、通常仍穩）或 `--turbo`（極速，太快可能有些沒點到）。
+- 想永久調整，改 `config.json` 的 `timing`：`move_duration`（滑鼠移動）、
+  `click_delay`（拿起球後等待）、`between_items`（每顆之間），數字越小越快。
+
 ---
 
 ## 停止 / 安全機制

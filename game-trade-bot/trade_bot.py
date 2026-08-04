@@ -530,14 +530,36 @@ def run_now(cfg, dry_run, debug):
     do_run(cfg, dry_run=dry_run, debug=debug)
 
 
+# 加速預設：覆蓋搬運相關的等待時間（不動 config 檔）
+SPEED_PRESETS = {
+    "fast":  {"move_duration": 0.05, "click_delay": 0.12, "between_items": 0.10, "click_hold": 0.03},
+    "turbo": {"move_duration": 0.0,  "click_delay": 0.05, "between_items": 0.05, "click_hold": 0.02},
+}
+
+
+def apply_speed(cfg, level):
+    preset = SPEED_PRESETS.get(level)
+    if not preset:
+        return
+    cfg["timing"].update(preset)
+    print(f"已套用加速：{level}（move={preset['move_duration']}, "
+          f"拿起後等={preset['click_delay']}, 每顆間隔={preset['between_items']} 秒）")
+
+
 def main():
     parser = argparse.ArgumentParser(description="遊戲交易自動精靈")
-    parser.add_argument("--now", action="store_true", help="不等 F1，倒數後直接執行一次")
+    parser.add_argument("--now", action="store_true", help="不等 F3，倒數後直接執行一次")
     parser.add_argument("--dry-run", action="store_true", help="只偵測並移動滑鼠示範，不真的點擊")
     parser.add_argument("--debug", action="store_true", help="另存 debug_view.png，畫出偵測結果")
+    parser.add_argument("--fast", action="store_true", help="加速搬運（較快，通常仍穩）")
+    parser.add_argument("--turbo", action="store_true", help="極速搬運（最快，太快可能有些沒點到）")
     args = parser.parse_args()
 
     cfg = load_config()
+    if args.turbo:
+        apply_speed(cfg, "turbo")
+    elif args.fast:
+        apply_speed(cfg, "fast")
 
     if args.now or keyboard is None:
         if keyboard is None and not args.now:
