@@ -121,6 +121,10 @@ python trade_bot.py --debug
 
 ## 抓不準？調 `config.json`
 
+> **會按到空格子？**（背包空格是青綠色的遊戲，如 Angels Online）
+> 空格的青綠色會被誤判成球。跑一次 **`python fix_color.py`** 一鍵修正
+> （把顏色範圍收窄成只抓 S.EXP 球的橄欖黃綠色），再跑 `--debug` 確認。
+
 用記事本打開 `config.json` 微調（改完存檔再跑）：
 
 | 項目 | 意思 | 調整方向 |

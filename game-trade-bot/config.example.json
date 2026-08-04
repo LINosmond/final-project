@@ -25,8 +25,8 @@
     "pos_b": null
   },
   "detection": {
-    "hue_min": 25,
-    "hue_max": 95,
+    "hue_min": 15,
+    "hue_max": 50,
     "sat_min": 60,
     "val_min": 60,
     "fill_ratio": 0.12,

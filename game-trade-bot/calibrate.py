@@ -154,8 +154,9 @@ def do_quick_calibration(old):
 # ---------------------------------------------------------------------------
 def build_config(inventory, trade, max_items, offset, old=None):
     detection = (old or {}).get("detection", {
-        "_說明": "用顏色抓綠球。若抓不到或誤判，微調 hue/sat/val/fill_ratio。可跑 trade_bot.py --debug 觀察。",
-        "hue_min": 25, "hue_max": 95, "sat_min": 60, "val_min": 60,
+        "_說明": "抓 S.EXP 球的橄欖黃綠色，排除青綠色空格。hue_max 太大會把青綠空格也當成球。"
+                 "若抓不到或誤判，微調 hue/sat/val/fill_ratio，跑 trade_bot.py --debug 觀察。",
+        "hue_min": 15, "hue_max": 50, "sat_min": 60, "val_min": 60,
         "fill_ratio": 0.12, "sample_size": 40,
     })
     timing = (old or {}).get("timing", {
