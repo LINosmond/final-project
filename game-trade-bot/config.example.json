@@ -19,8 +19,8 @@
     "_說明": "記住兩視窗左上角的相對位移，供『快速校正』只指一個點用（= 交易起點 - 道具起點）。",
     "offset_trade_from_inv": [-324, 374]
   },
-  "f4": {
-    "_說明": "F4 左鍵依序點的兩個位置；null 代表還沒設定，第一次按 F4 會請你設定。",
+  "two_click": {
+    "_說明": "F1 左鍵依序點的兩個位置；null 代表還沒設定，第一次按 F1 會請你設定。",
     "pos_a": null,
     "pos_b": null
   },
@@ -37,8 +37,8 @@
     "move_duration": 0.15,
     "click_delay": 0.35,
     "between_items": 0.5,
-    "f3_interval": 0.1,
-    "f4_gap": 0.15
+    "rightclick_interval": 0.1,
+    "two_click_gap": 0.15
   },
   "quantity": {
     "confirm_with_enter": false,
