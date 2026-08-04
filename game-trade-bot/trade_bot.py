@@ -3,10 +3,10 @@
 遊戲交易自動精靈 —— 主程式
 
 流程（對應你的需求）：
-  1. 偵測右邊「道具」背包裡哪幾格有綠色球（S.EXP）。
-  2. 左鍵點一下那顆球（拿起來）。
-  3. 移到左邊「交易」視窗的空格，左鍵點一下（放上去）。
-  4. 重複，最多放 8 個（可在 config.json 調整）。
+  1. 啟動時拍一張照，找出右邊「道具」背包裡所有有綠色球（S.EXP）的格子。
+  2. 從這些球裡「隨機挑」不重複的 8 顆（可在 config.json 調整）作為固定清單。
+  3. 依序：左鍵點該球（拿起）→ 左鍵點交易視窗空格（放上）。
+  （因為放上交易後背包的球不會消失，所以用啟動時那張照的固定清單，途中不再重新偵測。）
 
 熱鍵（系統級，焦點在遊戲上也有效）：
   F1 = 連續左鍵點兩個位置 開／關（第一次按會請你設定，之後記住）；Shift+F1 重新設定
@@ -31,6 +31,7 @@
 import argparse
 import json
 import os
+import random
 import sys
 import threading
 import time
@@ -181,18 +182,9 @@ def cell_fill_ratio(img_bgr, center, det):
     return float(mask.mean()) / 255.0
 
 
-def detect_items(img_bgr, cells, det):
-    """回傳每格是否有球的清單：[(有無, 比例), ...]。"""
-    return [(cell_fill_ratio(img_bgr, c, det) >= det["fill_ratio"],
-             cell_fill_ratio(img_bgr, c, det)) for c in cells]
-
-
-def find_first_item(img_bgr, cells, det):
-    """找出第一個有球的格子中心座標；沒有就回傳 None。"""
-    for c in cells:
-        if cell_fill_ratio(img_bgr, c, det) >= det["fill_ratio"]:
-            return c
-    return None
+def detect_ball_cells(img_bgr, cells, det):
+    """回傳所有『有球』的格子中心座標清單。"""
+    return [c for c in cells if cell_fill_ratio(img_bgr, c, det) >= det["fill_ratio"]]
 
 
 # ---------------------------------------------------------------------------
@@ -252,27 +244,27 @@ def run_sequence(cfg, dry_run=False, debug=False):
         if debug:
             save_debug(img, inv_cells, trade_cells, det, os.path.join(HERE, "debug_view.png"))
 
-        detected = sum(1 for c in inv_cells if cell_fill_ratio(img, c, det) >= det["fill_ratio"])
-        print(f"目前背包偵測到 {detected} 顆球，本次最多搬 {max_items} 顆。")
-        if detected == 0:
+        # 啟動時就拍這一張照，找出所有有球的格子。
+        # （放上交易後背包的球不會消失，所以不再每次重新偵測，改用這份固定清單。）
+        all_balls = detect_ball_cells(img, inv_cells, det)
+        print(f"目前背包偵測到 {len(all_balls)} 顆球，本次最多搬 {max_items} 顆。")
+        if not all_balls:
             print("沒有偵測到任何球。若確定畫面上有球，請調整 config.json 的 detection，"
                   "或先跑 python trade_bot.py --debug 看抓取情形。")
             return
 
+        # 從偵測到的球裡「隨機挑」不重複的 max_items 顆，一開始就固定下來。
+        chosen = random.sample(all_balls, min(max_items, len(all_balls)))
+        print(f"隨機挑了 {len(chosen)} 顆來搬。")
+
         placed = 0
-        for slot_index in range(max_items):
+        for slot_index, item in enumerate(chosen):
             if stop_event.is_set():
                 print("收到停止指令，中斷搬運。")
                 break
 
-            img = grab_screen(sct)  # 每次搬運前重新抓畫面（球會越搬越少）
-            item = find_first_item(img, inv_cells, det)
-            if item is None:
-                print("背包已經沒有球了，提前結束。")
-                break
-
             target = trade_cells[slot_index]
-            print(f"[{placed + 1}/{max_items}] 拿球 {item} → 放到交易格 {target}")
+            print(f"[{placed + 1}/{len(chosen)}] 拿球 {item} → 放到交易格 {target}")
 
             if dry_run:
                 pyautogui.moveTo(item[0], item[1], duration=timing["move_duration"])
