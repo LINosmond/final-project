@@ -1,4 +1,4 @@
 @echo off
 cd /d "%~dp0"
-python trade_bot.py --fast
+python trade_bot.py --turbo
 pause
