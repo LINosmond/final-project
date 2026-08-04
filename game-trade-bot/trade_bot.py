@@ -11,7 +11,8 @@
 熱鍵（系統級，焦點在遊戲上也有效）：
   F1 = 開始搬運（7 顆）；搬運中再按一次 = 停止
   F2 = 開始搬運（8 顆）；搬運中再按一次 = 停止
-  F3 = 連點右鍵開／關（在滑鼠當前位置一直點右鍵，再按一次停止）
+  F3 = 開始搬運（8 顆）；搬運中再按一次 = 停止
+  F4 = 連點右鍵開／關（在滑鼠當前位置一直點右鍵，再按一次停止）
 
 偵測方式：用顏色判斷。綠色球是偏黃綠／橄欖綠，空格是深藍色，
 兩者差很多，所以用 HSV 色相範圍就能分辨哪格有球。
@@ -315,13 +316,14 @@ def do_run(cfg, dry_run=False, debug=False, count=None):
 
 # ---------------------------------------------------------------------------
 # 熱鍵設定（v2）
-#   F1 = 立刻開始搬運（F1_COUNT 顆）
-#   F2 = 立刻開始搬運（F2_COUNT 顆）
-#   F3 = 連點右鍵 開／關（單鍵開關）
-#   F4 = 無
+#   F1 = 立刻開始搬運（F1_COUNT 顆）；搬運中再按一次 = 停止
+#   F2 = 立刻開始搬運（F2_COUNT 顆）；搬運中再按一次 = 停止
+#   F3 = 立刻開始搬運（F3_COUNT 顆）；搬運中再按一次 = 停止
+#   F4 = 連點右鍵 開／關（單鍵開關）
 # ---------------------------------------------------------------------------
 F1_COUNT = 7   # F1 一次搬幾顆
 F2_COUNT = 8   # F2 一次搬幾顆
+F3_COUNT = 8   # F3 一次搬幾顆
 
 
 def rightclick_interval(cfg):
@@ -338,7 +340,7 @@ def on_start_trade(cfg, dry_run, debug, count):
     threading.Thread(target=do_run, args=(cfg, dry_run, debug, count), daemon=True).start()
 
 
-# ---------- F3：連點右鍵（單鍵開關） ----------
+# ---------- F4：連點右鍵（單鍵開關） ----------
 def rightclick_loop(cfg):
     interval = rightclick_interval(cfg)
     try:
@@ -350,30 +352,32 @@ def rightclick_loop(cfg):
                     return
                 time.sleep(0.01)
     except pyautogui.FailSafeException:
-        print("F3：偵測到滑鼠到左上角，已停止連點右鍵。")
+        print("F4：偵測到滑鼠到左上角，已停止連點右鍵。")
         rightclick_active.clear()
 
 
 def on_toggle_rightclick(cfg):
     if rightclick_active.is_set():
         rightclick_active.clear()
-        print("F3：停止連點右鍵。")
+        print("F4：停止連點右鍵。")
     else:
         rightclick_active.set()
-        print("F3：開始連點右鍵（滑鼠停在要點的地方；再按 F3 停止）。")
+        print("F4：開始連點右鍵（滑鼠停在要點的地方；再按 F4 停止）。")
         threading.Thread(target=rightclick_loop, args=(cfg,), daemon=True).start()
 
 
 def hotkey_loop(cfg, dry_run, debug):
     keyboard.add_hotkey("f1", lambda: on_start_trade(cfg, dry_run, debug, F1_COUNT))
     keyboard.add_hotkey("f2", lambda: on_start_trade(cfg, dry_run, debug, F2_COUNT))
-    keyboard.add_hotkey("f3", lambda: on_toggle_rightclick(cfg))
+    keyboard.add_hotkey("f3", lambda: on_start_trade(cfg, dry_run, debug, F3_COUNT))
+    keyboard.add_hotkey("f4", lambda: on_toggle_rightclick(cfg))
     print("=" * 52)
     print("  點擊方式：" + ("Windows SendInput（遊戲相容）" if _USE_SENDINPUT else "pyautogui"))
     print("  熱鍵待命中：")
     print(f"    F1 = 開始搬運（{F1_COUNT} 顆）；搬運中再按一次 = 停止")
     print(f"    F2 = 開始搬運（{F2_COUNT} 顆）；搬運中再按一次 = 停止")
-    print("    F3 = 連點右鍵開／關（滑鼠停在要點的位置）")
+    print(f"    F3 = 開始搬運（{F3_COUNT} 顆）；搬運中再按一次 = 停止")
+    print("    F4 = 連點右鍵開／關（滑鼠停在要點的位置）")
     print("    （滑鼠甩到螢幕左上角 = 緊急停止；要結束程式關掉視窗或 Ctrl+C）")
     print("=" * 52)
     try:
