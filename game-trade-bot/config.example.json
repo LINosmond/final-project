@@ -38,7 +38,8 @@
     "click_delay": 0.35,
     "between_items": 0.5,
     "rightclick_interval": 0.1,
-    "two_click_gap": 0.15
+    "two_click_gap": 0.15,
+    "click_hold": 0.03
   },
   "quantity": {
     "confirm_with_enter": false,
