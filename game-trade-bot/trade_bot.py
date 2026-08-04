@@ -64,6 +64,7 @@ CONFIG_PATH = os.path.join(HERE, "config.json")
 # 執行控制用的旗標
 stop_event = threading.Event()     # 被設定 = 立刻停止目前這次搬運
 exit_event = threading.Event()     # 被設定 = 整個程式結束
+two_click_lock = threading.Lock()  # 避免 F1 兩點動作/設定被重複觸發
 busy_lock = threading.Lock()       # 確保同時只跑一次搬運
 rightclick_active = threading.Event()  # 被設定 = 連點右鍵(F2)進行中
 
@@ -360,30 +361,37 @@ def record_two_click(cfg):
     if keyboard is None:
         print("F1 兩點設定需要 keyboard 套件。")
         return
-    print("\n== 設定 F1 的兩個左鍵位置 ==")
-    print("把滑鼠移到【位置1】後按 Enter…")
-    if not wait_enter_press():
-        return
-    a = list(pyautogui.position())
-    print(f"  位置1 = {a}")
-    time.sleep(0.25)
-    print("把滑鼠移到【位置2】後按 Enter…")
-    if not wait_enter_press():
-        return
-    b = list(pyautogui.position())
-    print(f"  位置2 = {b}")
-    cfg["two_click"] = {"pos_a": a, "pos_b": b}
-    cfg.pop("f4", None)  # 清掉舊鍵名
-    save_config(cfg)
-    print("F1 兩點設定完成並已記住。之後按 F1 就會左鍵依序點這兩個位置；要重設按 Shift+F1。\n")
+    if not two_click_lock.acquire(blocking=False):
+        return  # 已在設定或執行中，忽略重複觸發
+    try:
+        print("\n== 設定 F1 的兩個左鍵位置 ==")
+        print("把滑鼠移到【位置1】後按 Enter…")
+        if not wait_enter_press():
+            return
+        a = list(pyautogui.position())
+        print(f"  位置1 = {a}")
+        time.sleep(0.25)
+        print("把滑鼠移到【位置2】後按 Enter…")
+        if not wait_enter_press():
+            return
+        b = list(pyautogui.position())
+        print(f"  位置2 = {b}")
+        cfg["two_click"] = {"pos_a": a, "pos_b": b}
+        cfg.pop("f4", None)  # 清掉舊鍵名
+        save_config(cfg)
+        print("F1 兩點設定完成並已記住。之後按 F1 就會左鍵依序點這兩個位置；要重設按 Shift+F1。\n")
+    finally:
+        two_click_lock.release()
 
 
 def do_two_click(cfg):
-    pos = two_click_cfg(cfg)
-    a, b = pos["pos_a"], pos["pos_b"]
-    d = cfg["timing"].get("move_duration", 0.15)
-    gap = two_click_gap(cfg)
+    if not two_click_lock.acquire(blocking=False):
+        return  # 上一次還沒點完，忽略重複觸發
     try:
+        pos = two_click_cfg(cfg)
+        a, b = pos["pos_a"], pos["pos_b"]
+        d = cfg["timing"].get("move_duration", 0.15)
+        gap = two_click_gap(cfg)
         pyautogui.moveTo(a[0], a[1], duration=d)
         pyautogui.click()
         time.sleep(gap)
@@ -392,6 +400,8 @@ def do_two_click(cfg):
         print(f"F1：已左鍵點 {a} → {b}")
     except pyautogui.FailSafeException:
         print("F1：偵測到滑鼠到左上角，已中止。")
+    finally:
+        two_click_lock.release()
 
 
 def on_two_click(cfg):
