@@ -9,9 +9,9 @@
   （因為放上交易後背包的球不會消失，所以用啟動時那張照的固定清單，途中不再重新偵測。）
 
 熱鍵（系統級，焦點在遊戲上也有效）：
-  F1 = 開始搬運（7 顆）；搬運中再按一次 = 停止
-  F2 = 開始搬運（8 顆）；搬運中再按一次 = 停止
-  F3 = 開始搬運（8 顆）；搬運中再按一次 = 停止
+  F1 = 開始搬運 綠球（7 顆）；搬運中再按一次 = 停止
+  F2 = 開始搬運 綠球（8 顆）；搬運中再按一次 = 停止
+  F3 = 開始搬運 粉紅道具（8 顆，另一種顏色辨識）；搬運中再按一次 = 停止
   F4 = 連點右鍵開／關（在滑鼠當前位置一直點右鍵，再按一次停止）
 
 偵測方式：用顏色判斷。綠色球是偏黃綠／橄欖綠，空格是深藍色，
@@ -226,10 +226,10 @@ def click(x, y, cfg):
 # ---------------------------------------------------------------------------
 # 核心搬運流程（會頻繁檢查 stop_event，讓 F2 立刻生效）
 # ---------------------------------------------------------------------------
-def run_sequence(cfg, dry_run=False, debug=False, count=None):
+def run_sequence(cfg, dry_run=False, debug=False, count=None, det=None):
     inv_cells = grid_cells(cfg["inventory"])
     trade_cells = grid_cells(cfg["trade"])
-    det = cfg["detection"]
+    det = det if det is not None else cfg["detection"]
     timing = cfg["timing"]
     want = count if count is not None else int(cfg.get("max_items", 8))
     max_items = min(int(want), len(trade_cells))
@@ -299,14 +299,14 @@ def run_sequence(cfg, dry_run=False, debug=False, count=None):
         print(f"本次結束，共搬了 {placed} 顆。")
 
 
-def do_run(cfg, dry_run=False, debug=False, count=None):
+def do_run(cfg, dry_run=False, debug=False, count=None, det=None):
     """包一層：避免重複觸發、處理 failsafe，跑完自動解除忙碌狀態。"""
     if not busy_lock.acquire(blocking=False):
         print("（正在搬運中，忽略這次）")
         return
     try:
         stop_event.clear()
-        run_sequence(cfg, dry_run=dry_run, debug=debug, count=count)
+        run_sequence(cfg, dry_run=dry_run, debug=debug, count=count, det=det)
     except pyautogui.FailSafeException:
         print("\n偵測到滑鼠移到左上角，已緊急中止。")
     finally:
@@ -325,19 +325,29 @@ F1_COUNT = 7   # F1 一次搬幾顆
 F2_COUNT = 8   # F2 一次搬幾顆
 F3_COUNT = 8   # F3 一次搬幾顆
 
+# F3 用「另一種道具」的顏色辨識（粉紅色道具，hue 0~15）；F1/F2 沿用 config 的綠球辨識。
+F3_COLOR = {"hue_min": 0, "hue_max": 15, "sat_min": 45, "val_min": 60}
+
+
+def f3_detection(cfg):
+    """F3 的偵測設定 = config 的偵測（取 sample_size/fill_ratio）+ 覆蓋成粉紅色範圍。"""
+    det = dict(cfg["detection"])
+    det.update(F3_COLOR)
+    return det
+
 
 def rightclick_interval(cfg):
     t = cfg["timing"]
     return t.get("rightclick_interval", t.get("f3_interval", 0.1))
 
 
-# ---------- F1 / F2：開始搬運（不同顆數）；搬運中再按一次就停 ----------
-def on_start_trade(cfg, dry_run, debug, count):
+# ---------- F1 / F2 / F3：開始搬運（不同顆數/辨識）；搬運中再按一次就停 ----------
+def on_start_trade(cfg, dry_run, debug, count, det=None):
     if busy_lock.locked():
         stop_event.set()
         print("停止搬運。")
         return
-    threading.Thread(target=do_run, args=(cfg, dry_run, debug, count), daemon=True).start()
+    threading.Thread(target=do_run, args=(cfg, dry_run, debug, count, det), daemon=True).start()
 
 
 # ---------- F4：連點右鍵（單鍵開關） ----------
@@ -369,14 +379,14 @@ def on_toggle_rightclick(cfg):
 def hotkey_loop(cfg, dry_run, debug):
     keyboard.add_hotkey("f1", lambda: on_start_trade(cfg, dry_run, debug, F1_COUNT))
     keyboard.add_hotkey("f2", lambda: on_start_trade(cfg, dry_run, debug, F2_COUNT))
-    keyboard.add_hotkey("f3", lambda: on_start_trade(cfg, dry_run, debug, F3_COUNT))
+    keyboard.add_hotkey("f3", lambda: on_start_trade(cfg, dry_run, debug, F3_COUNT, f3_detection(cfg)))
     keyboard.add_hotkey("f4", lambda: on_toggle_rightclick(cfg))
     print("=" * 52)
     print("  點擊方式：" + ("Windows SendInput（遊戲相容）" if _USE_SENDINPUT else "pyautogui"))
     print("  熱鍵待命中：")
-    print(f"    F1 = 開始搬運（{F1_COUNT} 顆）；搬運中再按一次 = 停止")
-    print(f"    F2 = 開始搬運（{F2_COUNT} 顆）；搬運中再按一次 = 停止")
-    print(f"    F3 = 開始搬運（{F3_COUNT} 顆）；搬運中再按一次 = 停止")
+    print(f"    F1 = 開始搬運 綠球（{F1_COUNT} 顆）；搬運中再按一次 = 停止")
+    print(f"    F2 = 開始搬運 綠球（{F2_COUNT} 顆）；搬運中再按一次 = 停止")
+    print(f"    F3 = 開始搬運 粉紅道具（{F3_COUNT} 顆）；搬運中再按一次 = 停止")
     print("    F4 = 連點右鍵開／關（滑鼠停在要點的位置）")
     print("    （滑鼠甩到螢幕左上角 = 緊急停止；要結束程式關掉視窗或 Ctrl+C）")
     print("=" * 52)
