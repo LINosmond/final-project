@@ -5,7 +5,8 @@
 流程（一直循環）：
   1. 點「能量晶化」。
   2. 等一下，下面 3×4 格會有一格亮燈。
-  3. 若亮的是【最大HP／攻擊力／魔攻／精準】其中之一 → 點「我要晶能加倍」。
+  3. 若亮的是【最大HP／攻擊力／魔攻／精準】其中之一 → 點「我要晶能加倍」，
+     再點跳出來的確認視窗「確定(✓)」。
      若不是 → 直接再回到步驟 1（跳過）。
 
 怎麼判斷「哪一格亮燈」：
@@ -15,7 +16,8 @@
 熱鍵（系統級，焦點在遊戲上也有效）：
   F1 = 開始／停止 循環
   F2 = 離開程式
-  F3 = 即時測試：印出 4 個目標格目前的亮度與基準（用來微調/確認）
+  F3 = 即時測試：印出 4 個目標格目前的亮度（用來微調/確認）
+  F4 = 設定「確定(✓)」按鈕位置（滑鼠移到✓上按 F4）
 
 安全：滑鼠甩到螢幕左上角 = 緊急中止；終端機 Ctrl+C 也能結束。
 """
@@ -108,6 +110,11 @@ def load_config():
         return json.load(f)
 
 
+def save_config(cfg):
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+
 # ---------------------------------------------------------------------------
 # 畫面與亮度
 # ---------------------------------------------------------------------------
@@ -195,6 +202,13 @@ def loop(cfg):
                     click_at(pos["double"], cfg)
                     if sleep_stoppable(t["after_double"]):
                         break
+                    confirm = pos.get("confirm")         # 4) 若有確認視窗 → 按確定(✓)
+                    if confirm:
+                        click_at(confirm, cfg)
+                        if sleep_stoppable(t.get("after_confirm", 0.4)):
+                            break
+                    else:
+                        print("  （尚未設定『確定』按鈕位置，跳過確認——請按 F4 設定）")
                 else:
                     print(f"[{n}] 非目標，跳過")
                 if sleep_stoppable(t["loop_gap"]):
@@ -235,6 +249,14 @@ def on_test(cfg):
     print("-------------------------------------------")
 
 
+def on_set_confirm(cfg):
+    """把滑鼠目前位置記成『確定(✓)』按鈕。先手動點一次加倍讓確認視窗跳出來，滑鼠移到✓上按 F4。"""
+    p = list(pyautogui.position())
+    cfg.setdefault("positions", {})["confirm"] = p
+    save_config(cfg)
+    print(f"F4：已把『確定(✓)』按鈕位置設為 {p}（之後加倍後會自動按這裡確認）。")
+
+
 def main():
     cfg = load_config()
     if keyboard is None:
@@ -242,13 +264,19 @@ def main():
     keyboard.add_hotkey("f1", lambda: on_toggle(cfg))
     keyboard.add_hotkey("f2", lambda: exit_event.set())
     keyboard.add_hotkey("f3", lambda: on_test(cfg))
+    keyboard.add_hotkey("f4", lambda: on_set_confirm(cfg))
+    confirm_set = bool(cfg.get("positions", {}).get("confirm"))
     print("=" * 52)
     print("  點擊方式：" + ("Windows SendInput（遊戲相容）" if _USE_SENDINPUT else "pyautogui"))
     print("  晶能融合自動腳本 —— 熱鍵待命中：")
     print("    F1 = 開始／停止 循環")
     print("    F2 = 離開程式")
     print("    F3 = 即時測試（印出 4 個目標格亮度，用來確認/微調）")
+    print("    F4 = 設定『確定(✓)』按鈕位置" + ("（已設定）" if confirm_set else "（尚未設定，請設定！）"))
     print("    （滑鼠甩到螢幕左上角 = 緊急中止；Ctrl+C 也能結束）")
+    if not confirm_set:
+        print("  ⚠ 尚未設定『確定』鈕：先手動點一次『我要晶能加倍』讓確認視窗跳出，")
+        print("     把滑鼠移到左邊的 ✓ 打勾鈕上，按 F4 記錄，之後才能自動確認。")
     print("=" * 52)
     try:
         while not exit_event.wait(0.2):

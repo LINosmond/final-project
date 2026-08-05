@@ -41,7 +41,7 @@ CONFIG_PATH = os.path.join(HERE, "config.json")
 TARGETS = ["最大HP", "攻擊力", "魔攻", "精準"]
 
 DEFAULT_DETECT = {"sample_w": 90, "sample_h": 34, "lit_rel_margin": 25}
-DEFAULT_TIMING = {"after_crystallize": 0.5, "after_double": 0.5,
+DEFAULT_TIMING = {"after_crystallize": 0.5, "after_double": 0.5, "after_confirm": 0.4,
                   "loop_gap": 0.15, "move_duration": 0.05, "click_hold": 0.03}
 
 
@@ -109,8 +109,14 @@ def main():
     for name in TARGETS:
         targets[name] = capture_point(f"目標格【{name}】的正中央")
 
+    # 確認視窗的「確定(✓)」按鈕：需要視窗先跳出來才能指
+    print("\n— 設定確認視窗的「確定(✓)」按鈕 —")
+    print("請先【手動點一次『我要晶能加倍』】讓確認視窗跳出來（會消耗 1 個秘藥）。")
+    confirm = capture_point("把滑鼠移到確認視窗左邊的 ✓ 打勾鈕，按 Enter")
+
     config = {
-        "positions": {"crystallize": crystallize, "double": double, "targets": targets},
+        "positions": {"crystallize": crystallize, "double": double,
+                      "targets": targets, "confirm": confirm},
         "detect": dict(DEFAULT_DETECT,
                        _說明="lit_rel_margin：亮燈那格會比其他格突出。最亮的比第二亮的高過此值才算亮燈。"
                              "誤判就調大、漏抓就調小。可用 F3 即時測試觀察。"),
