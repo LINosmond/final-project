@@ -40,7 +40,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
 TARGETS = ["最大HP", "攻擊力", "魔攻", "精準"]
 
-DEFAULT_DETECT = {"sample_w": 90, "sample_h": 34, "lit_rel_margin": 25}
+DEFAULT_DETECT = {"sample_w": 90, "sample_h": 34, "lit_rel_margin": 25,
+                  "dialog_diff": 18, "double_retries": 3,
+                  "dialog_region_w": 160, "dialog_region_h": 90}
 DEFAULT_TIMING = {"after_crystallize": 0.5, "after_double": 0.5, "after_confirm": 0.4,
                   "loop_gap": 0.15, "move_duration": 0.05, "click_hold": 0.03}
 

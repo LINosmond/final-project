@@ -187,6 +187,62 @@ def sleep_stoppable(seconds):
 
 
 # ---------------------------------------------------------------------------
+# 加倍 + 確認視窗偵測（比對確定鈕附近前後畫面差異，判斷視窗有沒有跳出來）
+# ---------------------------------------------------------------------------
+def _region(center, w, h, shape):
+    x, y = center
+    hw, hh = w // 2, h // 2
+    H, W = shape[:2]
+    return (max(0, x - hw), max(0, y - hh), min(W, x + hw), min(H, y + hh))
+
+
+def _crop(img, box):
+    x0, y0, x1, y1 = box
+    return img[y0:y1, x0:x1]
+
+
+def _mean_abs_diff(a, b):
+    if a.shape != b.shape or a.size == 0:
+        return 999.0
+    return float(np.abs(a.astype(np.int16) - b.astype(np.int16)).mean())
+
+
+def double_and_confirm(sct, cfg):
+    """按加倍 → 確認『確認視窗』有跳出來（前後畫面差異夠大）→ 按確定；
+    沒跳出來就再按一次加倍（最多重試幾次）。回傳 True 代表被要求停止。"""
+    pos, t, det = cfg["positions"], cfg["timing"], cfg["detect"]
+    confirm = pos.get("confirm")
+    if not confirm:
+        print("  （尚未設定『確定』按鈕位置，請按 F4 設定；這次先只點加倍）")
+        click_at(pos["double"], cfg)
+        return sleep_stoppable(t["after_double"])
+
+    w = det.get("dialog_region_w", 160)
+    h = det.get("dialog_region_h", 90)
+    thresh = det.get("dialog_diff", 18)
+    retries = det.get("double_retries", 3)
+
+    before_full = grab(sct)
+    box = _region(confirm, w, h, before_full.shape)
+    before = _crop(before_full, box).copy()   # 沒有視窗時的樣子（基準）
+
+    for attempt in range(retries + 1):
+        click_at(pos["double"], cfg)
+        if sleep_stoppable(t["after_double"]):
+            return True
+        d = _mean_abs_diff(before, _crop(grab(sct), box))
+        if d >= thresh:                        # 視窗有跳出來
+            click_at(confirm, cfg)             # 按確定(✓)
+            print(f"    確認視窗已出現(差異 {d:.0f}) → 按確定")
+            return sleep_stoppable(t.get("after_confirm", 0.4))
+        print(f"    沒偵測到確認視窗(差異 {d:.0f} < {thresh})，再按一次加倍…")
+        if not running.is_set() or exit_event.is_set():
+            return True
+    print("    重試多次仍沒出現確認視窗，跳過這次。")
+    return False
+
+
+# ---------------------------------------------------------------------------
 # 主循環
 # ---------------------------------------------------------------------------
 def loop(cfg):
@@ -205,19 +261,11 @@ def loop(cfg):
                 img = grab(sct)                          # 2) 看哪格亮
                 lit = which_target_lit(img, cfg)
                 n += 1
-                if lit:                                  # 3) 命中 → 加倍
+                if lit:                                  # 3) 命中 → 加倍 →（確認視窗）→ 確定
                     doubled += 1
                     print(f"[{n}] 亮燈：{lit} → 加倍（累計加倍 {doubled}）")
-                    click_at(pos["double"], cfg)
-                    if sleep_stoppable(t["after_double"]):
+                    if double_and_confirm(sct, cfg):
                         break
-                    confirm = pos.get("confirm")         # 4) 若有確認視窗 → 按確定(✓)
-                    if confirm:
-                        click_at(confirm, cfg)
-                        if sleep_stoppable(t.get("after_confirm", 0.4)):
-                            break
-                    else:
-                        print("  （尚未設定『確定』按鈕位置，跳過確認——請按 F4 設定）")
                 else:
                     print(f"[{n}] 非目標，跳過")
                 if sleep_stoppable(t["loop_gap"]):
