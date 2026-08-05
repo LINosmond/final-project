@@ -146,14 +146,23 @@ def target_brightness(img, cfg):
     return vals
 
 
+def baseline_of(vals):
+    """用『最暗的兩格』平均當基準——這兩格通常沒亮、也沒被隔壁亮框牽連。"""
+    lows = [v for _, v in vals[-2:]]
+    return sum(lows) / len(lows) if lows else 0.0
+
+
 def which_target_lit(img, cfg):
-    """用『相對亮度』判斷：亮燈那格會比其他格突出一大截。
+    """用『相對亮度』判斷：亮燈那格會比『沒被牽連的暗格』突出一大截。
+    （不跟第二亮比，因為亮燈格的鄰格會被亮框牽連而變亮。）
     回傳目前亮燈的目標名稱；沒有就回 None。"""
     margin = cfg["detect"].get("lit_rel_margin", 25)
-    vals = target_brightness(img, cfg)
-    # 最亮的一格，要比第二亮的高過 margin 才算亮燈（否則就是大家一起變亮、沒有特別亮的目標）
-    if len(vals) >= 2 and vals[0][1] - vals[1][1] >= margin:
-        return vals[0][0]
+    vals = target_brightness(img, cfg)   # 由亮到暗
+    if len(vals) < 3:
+        return None
+    top_name, top_val = vals[0]
+    if top_val - baseline_of(vals) >= margin:
+        return top_name
     return None
 
 
@@ -240,12 +249,14 @@ def on_test(cfg):
         img = grab(sct)
     vals = target_brightness(img, cfg)
     lit = which_target_lit(img, cfg)
-    diff = (vals[0][1] - vals[1][1]) if len(vals) >= 2 else 0
-    print("--- 即時亮度測試（最亮的比第二亮高過 %.0f 才算亮燈）---" % margin)
+    base = baseline_of(vals)
+    diff = vals[0][1] - base if vals else 0
+    print("--- 即時亮度測試（最亮的比『暗格基準』高過 %.0f 才算亮燈）---" % margin)
     for name, b in vals:
         mark = "★亮燈" if name == lit else ""
         print(f"  {name:>5}：{b:6.1f}  {mark}")
-    print(f"  最亮-第二亮 = {diff:.1f}（門檻 {margin}）→ {'亮燈：' + lit if lit else '沒有目標亮燈'}")
+    print(f"  暗格基準 = {base:.1f}；最亮-基準 = {diff:.1f}（門檻 {margin}）"
+          f"→ {'亮燈：' + lit if lit else '沒有目標亮燈'}")
     print("-------------------------------------------")
 
 
