@@ -25,6 +25,9 @@ import os
 import sys
 import threading
 import time
+import warnings
+
+warnings.filterwarnings("ignore")  # 隱藏 mss 等套件的 Deprecation 提示
 
 import numpy as np
 
@@ -126,15 +129,24 @@ def cell_brightness(img, center, w, h):
     return float(gray.mean())
 
 
-def which_target_lit(img, cfg):
-    """回傳目前亮燈的目標名稱；沒有就回 None。"""
+def target_brightness(img, cfg):
+    """回傳 [(名稱, 亮度), ...]，由亮到暗排序。"""
     det = cfg["detect"]
-    w, h, margin = det["sample_w"], det["sample_h"], det["lit_margin"]
-    for name in TARGETS:
-        pos = cfg["positions"]["targets"][name]
-        base = cfg["baseline"][name]
-        if cell_brightness(img, pos, w, h) >= base + margin:
-            return name
+    w, h = det["sample_w"], det["sample_h"]
+    vals = [(name, cell_brightness(img, cfg["positions"]["targets"][name], w, h))
+            for name in TARGETS]
+    vals.sort(key=lambda x: x[1], reverse=True)
+    return vals
+
+
+def which_target_lit(img, cfg):
+    """用『相對亮度』判斷：亮燈那格會比其他格突出一大截。
+    回傳目前亮燈的目標名稱；沒有就回 None。"""
+    margin = cfg["detect"].get("lit_rel_margin", 25)
+    vals = target_brightness(img, cfg)
+    # 最亮的一格，要比第二亮的高過 margin 才算亮燈（否則就是大家一起變亮、沒有特別亮的目標）
+    if len(vals) >= 2 and vals[0][1] - vals[1][1] >= margin:
+        return vals[0][0]
     return None
 
 
@@ -208,17 +220,18 @@ def on_toggle(cfg):
 
 
 def on_test(cfg):
-    """即時印出 4 個目標格的亮度 vs 基準，方便確認/微調。"""
-    det = cfg["detect"]
+    """即時印出 4 個目標格的亮度，並顯示判定結果（用相對亮度）。"""
+    margin = cfg["detect"].get("lit_rel_margin", 25)
     with mss.mss() as sct:
         img = grab(sct)
-    print("--- 即時亮度測試（>= 基準+邊界 才算亮燈）---")
-    for name in TARGETS:
-        pos = cfg["positions"]["targets"][name]
-        b = cell_brightness(img, pos, det["sample_w"], det["sample_h"])
-        base = cfg["baseline"][name]
-        lit = "★亮燈" if b >= base + det["lit_margin"] else "  暗"
-        print(f"  {name:>5}：目前 {b:6.1f}  基準 {base:6.1f}  門檻 {base+det['lit_margin']:6.1f}  {lit}")
+    vals = target_brightness(img, cfg)
+    lit = which_target_lit(img, cfg)
+    diff = (vals[0][1] - vals[1][1]) if len(vals) >= 2 else 0
+    print("--- 即時亮度測試（最亮的比第二亮高過 %.0f 才算亮燈）---" % margin)
+    for name, b in vals:
+        mark = "★亮燈" if name == lit else ""
+        print(f"  {name:>5}：{b:6.1f}  {mark}")
+    print(f"  最亮-第二亮 = {diff:.1f}（門檻 {margin}）→ {'亮燈：' + lit if lit else '沒有目標亮燈'}")
     print("-------------------------------------------")
 
 

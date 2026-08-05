@@ -40,7 +40,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
 TARGETS = ["最大HP", "攻擊力", "魔攻", "精準"]
 
-DEFAULT_DETECT = {"sample_w": 90, "sample_h": 34, "lit_margin": 25}
+DEFAULT_DETECT = {"sample_w": 90, "sample_h": 34, "lit_rel_margin": 25}
 DEFAULT_TIMING = {"after_crystallize": 0.5, "after_double": 0.5,
                   "loop_gap": 0.15, "move_duration": 0.05, "click_hold": 0.03}
 
@@ -109,22 +109,13 @@ def main():
     for name in TARGETS:
         targets[name] = capture_point(f"目標格【{name}】的正中央")
 
-    # 記基準亮度（此刻這 4 格應該都沒亮）
-    print("再次確認這 4 格【現在都沒亮】，然後按 Enter 記錄基準亮度…")
-    wait_enter()
-    img = grab()
-    baseline = {name: round(cell_brightness(img, targets[name],
-                DEFAULT_DETECT["sample_w"], DEFAULT_DETECT["sample_h"]), 1)
-                for name in TARGETS}
-    print("  基準亮度：", baseline)
-
     config = {
         "positions": {"crystallize": crystallize, "double": double, "targets": targets},
-        "baseline": baseline,
         "detect": dict(DEFAULT_DETECT,
-                       _說明="lit_margin：亮度超過『基準+此值』才算亮燈。誤判就調大、抓不到就調小。可用 F3 即時測試觀察。"),
+                       _說明="lit_rel_margin：亮燈那格會比其他格突出。最亮的比第二亮的高過此值才算亮燈。"
+                             "誤判就調大、漏抓就調小。可用 F3 即時測試觀察。"),
         "timing": dict(DEFAULT_TIMING,
-                       _說明="after_crystallize：按晶化後等多久才判斷亮燈（動畫要跳過才快）。"),
+                       _說明="after_crystallize：按晶化後等多久才判斷亮燈（遊戲勾『跳過動畫』才快又準）。"),
     }
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
@@ -133,10 +124,10 @@ def main():
     print(f"已存好設定：{CONFIG_PATH}")
     print("=" * 56)
     print(
-        "\n建議先開主程式、用 F3 測試亮度是否分得開：\n"
+        "\n建議先開主程式、用 F3 測試判斷對不對：\n"
         "  python fusion_bot.py\n"
-        "  → 讓某個目標格亮燈時按 F3，看該格『目前』有沒有明顯超過『門檻』。\n"
-        "  → 分不開就調 config.json 的 detect.lit_margin（誤判調大、漏抓調小）。\n"
+        "  → 讓某個目標格亮燈時按 F3，看是不是只標到那一格。\n"
+        "  → 不準就調 config.json 的 detect.lit_rel_margin（誤判調大、漏抓調小）。\n"
         "沒問題後按 F1 開始循環。\n"
     )
 
