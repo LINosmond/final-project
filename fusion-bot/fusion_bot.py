@@ -52,11 +52,13 @@ except ImportError:
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
+DIALOG_REF_PATH = os.path.join(HERE, "dialog_ref.png")  # 確認視窗樣本（F4 拍）
 
 TARGETS = ["最大HP", "攻擊力", "魔攻", "精準"]  # 亮這幾個才按加倍
 
 running = threading.Event()   # 被設定 = 循環進行中
 exit_event = threading.Event()
+_dialog_ref = None            # 快取：確認視窗樣本圖
 
 
 # ---------------------------------------------------------------------------
@@ -207,38 +209,97 @@ def _mean_abs_diff(a, b):
     return float(np.abs(a.astype(np.int16) - b.astype(np.int16)).mean())
 
 
+def dialog_present(sct, cfg):
+    """用『確認視窗樣本』判斷現在確認視窗有沒有開著。
+    回傳 True/False；若沒有樣本圖則回 None（無法判斷）。"""
+    global _dialog_ref
+    box = cfg["positions"].get("confirm_box")
+    if not box:
+        return None
+    if _dialog_ref is None:
+        if not os.path.exists(DIALOG_REF_PATH):
+            return None
+        _dialog_ref = cv2.imread(DIALOG_REF_PATH)
+    if _dialog_ref is None:
+        return None
+    cur = _crop(grab(sct), tuple(box))
+    if cur.shape != _dialog_ref.shape:
+        return None
+    d = _mean_abs_diff(cur, _dialog_ref)
+    return d <= cfg["detect"].get("dialog_present_thresh", 15)
+
+
+def dismiss_leftover_dialog(sct, cfg):
+    """按能量晶化前的防呆：若上次的確認視窗還開著，先按確定關掉。回傳 True 代表要停止。"""
+    pos, t, det = cfg["positions"], cfg["timing"], cfg["detect"]
+    for _ in range(det.get("double_retries", 3) + 1):
+        if dialog_present(sct, cfg) is not True:
+            return False
+        print("  偵測到殘留的確認視窗，先按確定關掉…")
+        click_at(pos["confirm"], cfg)
+        if sleep_stoppable(t.get("after_confirm", 0.4)):
+            return True
+    return False
+
+
 def double_and_confirm(sct, cfg):
-    """按加倍 → 確認『確認視窗』有跳出來（前後畫面差異夠大）→ 按確定；
-    沒跳出來就再按一次加倍（最多重試幾次）。回傳 True 代表被要求停止。"""
+    """按加倍 → 確認視窗跳出 → 按確定 → 確認視窗關掉。
+    加倍點空就重按加倍；確定點空就重按確定。回傳 True 代表被要求停止。"""
     pos, t, det = cfg["positions"], cfg["timing"], cfg["detect"]
     confirm = pos.get("confirm")
+    retries = det.get("double_retries", 3)
+
     if not confirm:
         print("  （尚未設定『確定』按鈕位置，請按 F4 設定；這次先只點加倍）")
         click_at(pos["double"], cfg)
         return sleep_stoppable(t["after_double"])
 
+    has_ref = cfg["positions"].get("confirm_box") and os.path.exists(DIALOG_REF_PATH)
+
+    # 用前後畫面差異當備援（沒有樣本圖時）
     w = det.get("dialog_region_w", 160)
     h = det.get("dialog_region_h", 90)
     thresh = det.get("dialog_diff", 18)
-    retries = det.get("double_retries", 3)
+    before = None
+    if not has_ref:
+        before = _crop(grab(sct), _region(confirm, w, h, grab(sct).shape)).copy()
 
-    before_full = grab(sct)
-    box = _region(confirm, w, h, before_full.shape)
-    before = _crop(before_full, box).copy()   # 沒有視窗時的樣子（基準）
+    def dialog_showing():
+        if has_ref:
+            return dialog_present(sct, cfg) is True
+        box = _region(confirm, w, h, before.shape)
+        return _mean_abs_diff(before, _crop(grab(sct), box)) >= thresh
 
-    for attempt in range(retries + 1):
+    # 第一階段：按加倍直到確認視窗出現
+    appeared = False
+    for _ in range(retries + 1):
         click_at(pos["double"], cfg)
         if sleep_stoppable(t["after_double"]):
             return True
-        d = _mean_abs_diff(before, _crop(grab(sct), box))
-        if d >= thresh:                        # 視窗有跳出來
-            click_at(confirm, cfg)             # 按確定(✓)
-            print(f"    確認視窗已出現(差異 {d:.0f}) → 按確定")
-            return sleep_stoppable(t.get("after_confirm", 0.4))
-        print(f"    沒偵測到確認視窗(差異 {d:.0f} < {thresh})，再按一次加倍…")
+        if dialog_showing():
+            appeared = True
+            break
+        print("    沒偵測到確認視窗，再按一次加倍…")
         if not running.is_set() or exit_event.is_set():
             return True
-    print("    重試多次仍沒出現確認視窗，跳過這次。")
+    if not appeared:
+        print("    加倍重試多次仍沒出現確認視窗，跳過這次。")
+        return False
+
+    # 第二階段：按確定直到確認視窗關掉（沒樣本圖就按一次）
+    if not has_ref:
+        click_at(confirm, cfg)
+        print("    確認視窗已出現 → 按確定")
+        return sleep_stoppable(t.get("after_confirm", 0.4))
+    for _ in range(retries + 1):
+        click_at(confirm, cfg)
+        if sleep_stoppable(t.get("after_confirm", 0.4)):
+            return True
+        if dialog_present(sct, cfg) is not True:   # 已關掉
+            print("    已按確定，確認視窗關閉。")
+            return False
+        print("    確定點空了，再按一次確定…")
+    print("    確定重試多次仍沒關掉視窗（下輪晶化前會再嘗試關掉）。")
     return False
 
 
@@ -255,6 +316,8 @@ def loop(cfg):
     try:
         with mss.mss() as sct:
             while running.is_set() and not exit_event.is_set():
+                if dismiss_leftover_dialog(sct, cfg):  # 0) 防呆：先關掉殘留的確認視窗
+                    break
                 click_at(pos["crystallize"], cfg)      # 1) 能量晶化
                 if sleep_stoppable(t["after_crystallize"]):
                     break
@@ -309,11 +372,24 @@ def on_test(cfg):
 
 
 def on_set_confirm(cfg):
-    """把滑鼠目前位置記成『確定(✓)』按鈕。先手動點一次加倍讓確認視窗跳出來，滑鼠移到✓上按 F4。"""
+    """把滑鼠目前位置記成『確定(✓)』按鈕，並拍一張確認視窗樣本。
+    請在【確認視窗有顯示】時，滑鼠移到✓上按 F4。"""
+    global _dialog_ref
     p = list(pyautogui.position())
+    det = cfg.setdefault("detect", {})
+    w = det.get("dialog_region_w", 160)
+    h = det.get("dialog_region_h", 90)
+    with mss.mss() as sct:
+        img = grab(sct)
+    box = _region(p, w, h, img.shape)
+    ref = _crop(img, box)
+    cv2.imwrite(DIALOG_REF_PATH, ref)
+    _dialog_ref = ref
     cfg.setdefault("positions", {})["confirm"] = p
+    cfg["positions"]["confirm_box"] = list(box)
     save_config(cfg)
-    print(f"F4：已把『確定(✓)』按鈕位置設為 {p}（之後加倍後會自動按這裡確認）。")
+    print(f"F4：已記錄『確定(✓)』位置 {p} 並拍下確認視窗樣本。")
+    print("    （若剛剛確認視窗『沒有』顯示，請點一次加倍讓它跳出來後，再按一次 F4 重拍）")
 
 
 def main():
@@ -325,17 +401,18 @@ def main():
     keyboard.add_hotkey("f3", lambda: on_test(cfg))
     keyboard.add_hotkey("f4", lambda: on_set_confirm(cfg))
     confirm_set = bool(cfg.get("positions", {}).get("confirm"))
+    has_ref = bool(cfg.get("positions", {}).get("confirm_box")) and os.path.exists(DIALOG_REF_PATH)
     print("=" * 52)
     print("  點擊方式：" + ("Windows SendInput（遊戲相容）" if _USE_SENDINPUT else "pyautogui"))
     print("  晶能融合自動腳本 —— 熱鍵待命中：")
     print("    F1 = 開始／停止 循環")
     print("    F2 = 離開程式")
     print("    F3 = 即時測試（印出 4 個目標格亮度，用來確認/微調）")
-    print("    F4 = 設定『確定(✓)』按鈕位置" + ("（已設定）" if confirm_set else "（尚未設定，請設定！）"))
+    print("    F4 = 設定『確定(✓)』位置＋拍確認視窗樣本" + ("（已設定）" if has_ref else "（尚未設定，請設定！）"))
     print("    （滑鼠甩到螢幕左上角 = 緊急中止；Ctrl+C 也能結束）")
-    if not confirm_set:
-        print("  ⚠ 尚未設定『確定』鈕：先手動點一次『我要晶能加倍』讓確認視窗跳出，")
-        print("     把滑鼠移到左邊的 ✓ 打勾鈕上，按 F4 記錄，之後才能自動確認。")
+    if not has_ref:
+        print("  ⚠ 尚未拍到『確認視窗樣本』：先手動點一次『我要晶能加倍』讓確認視窗跳出，")
+        print("     【保持視窗顯示著】把滑鼠移到左邊的 ✓ 打勾鈕上按 F4，才能防呆偵測視窗。")
     print("=" * 52)
     try:
         while not exit_event.wait(0.2):

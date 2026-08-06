@@ -41,8 +41,9 @@ CONFIG_PATH = os.path.join(HERE, "config.json")
 TARGETS = ["最大HP", "攻擊力", "魔攻", "精準"]
 
 DEFAULT_DETECT = {"sample_w": 90, "sample_h": 34, "lit_rel_margin": 25,
-                  "dialog_diff": 18, "double_retries": 3,
+                  "dialog_diff": 18, "double_retries": 3, "dialog_present_thresh": 15,
                   "dialog_region_w": 160, "dialog_region_h": 90}
+DIALOG_REF_PATH = os.path.join(HERE, "dialog_ref.png")
 DEFAULT_TIMING = {"after_crystallize": 0.5, "after_double": 0.5, "after_confirm": 0.4,
                   "loop_gap": 0.15, "move_duration": 0.05, "click_hold": 0.03}
 
@@ -111,14 +112,24 @@ def main():
     for name in TARGETS:
         targets[name] = capture_point(f"目標格【{name}】的正中央")
 
-    # 確認視窗的「確定(✓)」按鈕：需要視窗先跳出來才能指
+    # 確認視窗的「確定(✓)」按鈕：需要視窗先跳出來才能指（順便拍樣本）
     print("\n— 設定確認視窗的「確定(✓)」按鈕 —")
-    print("請先【手動點一次『我要晶能加倍』】讓確認視窗跳出來（會消耗 1 個秘藥）。")
+    print("請先【手動點一次『我要晶能加倍』】讓確認視窗跳出來（會消耗 1 個秘藥），")
+    print("並【保持確認視窗顯示著】再做下一步（要拍視窗樣本）。")
     confirm = capture_point("把滑鼠移到確認視窗左邊的 ✓ 打勾鈕，按 Enter")
+    # 拍下確認視窗樣本（此刻視窗應顯示著）
+    img = grab()
+    w, h = DEFAULT_DETECT["dialog_region_w"], DEFAULT_DETECT["dialog_region_h"]
+    x, y = confirm
+    hw, hh = w // 2, h // 2
+    H, W = img.shape[:2]
+    box = [max(0, x - hw), max(0, y - hh), min(W, x + hw), min(H, y + hh)]
+    cv2.imwrite(DIALOG_REF_PATH, img[box[1]:box[3], box[0]:box[2]])
+    print(f"  已拍下確認視窗樣本：{DIALOG_REF_PATH}")
 
     config = {
         "positions": {"crystallize": crystallize, "double": double,
-                      "targets": targets, "confirm": confirm},
+                      "targets": targets, "confirm": confirm, "confirm_box": box},
         "detect": dict(DEFAULT_DETECT,
                        _說明="lit_rel_margin：亮燈那格會比其他格突出。最亮的比第二亮的高過此值才算亮燈。"
                              "誤判就調大、漏抓就調小。可用 F3 即時測試觀察。"),
