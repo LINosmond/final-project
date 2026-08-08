@@ -3,10 +3,10 @@
 遊戲交易自動精靈 —— 主程式
 
 流程（對應你的需求）：
-  1. 拍照找出右邊「道具」背包有球的格子，也偵測左邊交易視窗哪幾格是空的。
-  2. 第一輪：一口氣把每個空格各放一顆球（不逐格重拍，所以快）。
-  3. 第二輪起：重拍畫面，只補「真的漏擺」的格子（次數少）。
-     直到放滿 N 格（F1=7、F2=8，可在程式頂端 F1_COUNT/F2_COUNT 調整）或沒球為止。
+  1. 拍照找出右邊「道具」背包有球的格子。
+  2. 第一輪：照順序把前 N 格各放一顆球（不逐格重拍，所以快）。
+  3. 第二輪起：重拍畫面，檢查哪幾格漏擺 → 補上沒拿過的球。
+     N = F1=7、F2=8（可在程式頂端 F1_COUNT/F2_COUNT 調整）。
 
 熱鍵（系統級，焦點在遊戲上也有效）：
   F1 = 開始搬運 綠球（7 顆）；搬運中再按一次 = 停止
@@ -284,17 +284,11 @@ def run_sequence(cfg, dry_run=False, debug=False, count=None, det=None):
                   "或先跑 python trade_bot.py --debug 看抓取情形。")
             return
 
-        # 拍照時就找出交易視窗「空的格子」，只往空格放
-        empty_slots = [s for s in trade_cells if not is_filled(img, s)]
-        already = len(trade_cells) - len(empty_slots)
-        need = max(0, max_items - already)
-        targets = empty_slots[:need]
-        if not targets:
-            print("交易格已達目標，無需放置。")
-            return
-        print(f"要填 {len(targets)} 個空格。")
+        # 目標就是前 max_items 個交易格
+        targets = trade_cells[:max_items]
+        print(f"要放 {len(targets)} 個。")
 
-        # 第一輪：一口氣快速放（不逐格重拍，所以快）——球放上交易後背包不會消失，沿用這張照的偵測
+        # 第一輪：照順序前 N 格各放一顆，中途不重拍（所以快）——球放上交易後背包不會消失
         for target in targets:
             if stop_event.is_set():
                 break
@@ -302,7 +296,7 @@ def run_sequence(cfg, dry_run=False, debug=False, count=None, det=None):
                 print("背包沒有可用的球了，停止。")
                 break
 
-        # 第二輪起：只重拍畫面找「真的漏擺」的格子補放（次數少，所以還是快）
+        # 第二輪起：重拍畫面，檢查哪幾格還是空的（漏擺）→ 補上沒拿過的球
         for _ in range(int(cfg.get("place_retries", 2))):
             if stop_event.is_set():
                 break
@@ -319,7 +313,7 @@ def run_sequence(cfg, dry_run=False, debug=False, count=None, det=None):
 
         cur = grab_screen(sct)
         done = sum(1 for t in targets if is_filled(cur, t))
-        print(f"本次結束，放上 {done + already}／目標 {max_items}（本次新放 {done}）。")
+        print(f"本次結束，放上 {done}／目標 {max_items}。")
 
 
 def do_run(cfg, dry_run=False, debug=False, count=None, det=None):
