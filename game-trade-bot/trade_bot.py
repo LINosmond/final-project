@@ -3,9 +3,9 @@
 遊戲交易自動精靈 —— 主程式
 
 流程（對應你的需求）：
-  1. 拍照找出右邊「道具」背包裡有球（顏色）的格子，也偵測左邊交易視窗哪幾格是空的。
-  2. 只往「空格」放：拿一顆還沒用過的球 → 放到第一個空格。
-  3. 每放一個都重新偵測，確認有放上去；漏擺的格子下一輪會自動補放，
+  1. 拍照找出右邊「道具」背包有球的格子，也偵測左邊交易視窗哪幾格是空的。
+  2. 第一輪：一口氣把每個空格各放一顆球（不逐格重拍，所以快）。
+  3. 第二輪起：重拍畫面，只補「真的漏擺」的格子（次數少）。
      直到放滿 N 格（F1=7、F2=8，可在程式頂端 F1_COUNT/F2_COUNT 調整）或沒球為止。
 
 熱鍵（系統級，焦點在遊戲上也有效）：
@@ -246,82 +246,80 @@ def run_sequence(cfg, dry_run=False, debug=False, count=None, det=None):
     def is_filled(image, center):
         return cell_fill_ratio(image, center, det) >= det["fill_ratio"]
 
+    used = set()  # 已用過的背包球（避免重複拿同一顆）
+
+    def place_one(target, cur_img):
+        """挑一顆沒用過的球放到 target。回傳 True=有動作、False=沒球可用/停止。"""
+        balls = detect_ball_cells(cur_img, inv_cells, det)
+        available = [b for b in balls if tuple(b) not in used]
+        if not available:
+            return False
+        item = random.choice(available)
+        used.add(tuple(item))
+        if dry_run:
+            pyautogui.moveTo(item[0], item[1], duration=timing["move_duration"])
+            if sleep_interruptible(0.15):
+                return True
+            pyautogui.moveTo(target[0], target[1], duration=timing["move_duration"])
+            sleep_interruptible(timing["between_items"])
+            return True
+        click(item[0], item[1], cfg)                       # 拿起
+        if sleep_interruptible(timing["click_delay"]):
+            return True
+        if cfg["quantity"]["confirm_with_enter"]:
+            sleep_interruptible(cfg["quantity"]["enter_delay"])
+            pyautogui.press("enter")
+            sleep_interruptible(cfg["quantity"]["enter_delay"])
+        click(target[0], target[1], cfg)                   # 放上
+        sleep_interruptible(timing["between_items"])
+        return True
+
     with mss.mss() as sct:
         img = grab_screen(sct)
-
         if debug:
             save_debug(img, inv_cells, trade_cells, det, os.path.join(HERE, "debug_view.png"))
 
-        all_balls = detect_ball_cells(img, inv_cells, det)
-        if not all_balls:
+        if not detect_ball_cells(img, inv_cells, det):
             print("沒有偵測到任何球。若確定畫面上有球，請調整 config.json 的 detection，"
                   "或先跑 python trade_bot.py --debug 看抓取情形。")
             return
-        print(f"背包偵測到 {len(all_balls)} 顆球，目標填滿 {max_items} 個交易格。")
 
-        # 每放一個都重新偵測「交易視窗哪幾格是空的」，只往空格放；漏擺的格子下輪會自動補放。
-        used = set()                       # 已成功放上去的背包球（避免重複拿同一顆）
-        attempts = 0
-        max_attempts = max_items * 4 + 6   # 防呆：避免一直漏擺時無限迴圈
-        while not stop_event.is_set():
-            img = grab_screen(sct)
-            filled = sum(1 for s in trade_cells if is_filled(img, s))
-            empty_slots = [s for s in trade_cells if not is_filled(img, s)]
-            if filled >= max_items or not empty_slots:
+        # 拍照時就找出交易視窗「空的格子」，只往空格放
+        empty_slots = [s for s in trade_cells if not is_filled(img, s)]
+        already = len(trade_cells) - len(empty_slots)
+        need = max(0, max_items - already)
+        targets = empty_slots[:need]
+        if not targets:
+            print("交易格已達目標，無需放置。")
+            return
+        print(f"要填 {len(targets)} 個空格。")
+
+        # 第一輪：一口氣快速放（不逐格重拍，所以快）——球放上交易後背包不會消失，沿用這張照的偵測
+        for target in targets:
+            if stop_event.is_set():
                 break
-            target = empty_slots[0]        # 下一個空格
-
-            balls = detect_ball_cells(img, inv_cells, det)
-            available = [b for b in balls if tuple(b) not in used]
-            if not available:
+            if not place_one(target, img):
                 print("背包沒有可用的球了，停止。")
                 break
 
-            attempts += 1
-            if attempts > max_attempts:
-                print(f"嘗試 {attempts} 次仍無法填滿（已填 {filled}/{max_items}），停止。")
-                break
-
-            item = random.choice(available)
-            print(f"[{filled + 1}/{max_items}] 空格 {target} ← 拿球 {item}")
-
-            if dry_run:
-                pyautogui.moveTo(item[0], item[1], duration=timing["move_duration"])
-                if sleep_interruptible(0.2):
-                    break
-                pyautogui.moveTo(target[0], target[1], duration=timing["move_duration"])
-                used.add(tuple(item))      # 空跑：假裝成功，才會往下一格示範
-                if sleep_interruptible(timing["between_items"]):
-                    break
-                continue
-
-            # 1) 點背包的球（拿起）
-            click(item[0], item[1], cfg)
-            if sleep_interruptible(timing["click_delay"]):
-                break
-            # 2) 若有數量視窗，可選擇按 Enter 確認
-            if cfg["quantity"]["confirm_with_enter"]:
-                if sleep_interruptible(cfg["quantity"]["enter_delay"]):
-                    break
-                pyautogui.press("enter")
-                if sleep_interruptible(cfg["quantity"]["enter_delay"]):
-                    break
-            # 3) 點交易視窗空格（放上）
+        # 第二輪起：只重拍畫面找「真的漏擺」的格子補放（次數少，所以還是快）
+        for _ in range(int(cfg.get("place_retries", 2))):
             if stop_event.is_set():
                 break
-            click(target[0], target[1], cfg)
-            if sleep_interruptible(timing["between_items"]):
+            cur = grab_screen(sct)
+            misses = [t for t in targets if not is_filled(cur, t)]
+            if not misses:
                 break
+            print(f"補放漏擺的 {len(misses)} 格…")
+            for target in misses:
+                if stop_event.is_set():
+                    break
+                if not place_one(target, cur):
+                    break
 
-            # 4) 確認這格真的放上去了；有放上去才把這顆球記為已用，否則下輪會再補放
-            if is_filled(grab_screen(sct), target):
-                used.add(tuple(item))
-            else:
-                print("    這格好像沒放到，下一輪會再補放。")
-
-        img = grab_screen(sct)
-        done = sum(1 for s in trade_cells if is_filled(img, s))
-        print(f"本次結束，交易格已放上 {done} 個（目標 {max_items}）。")
+        cur = grab_screen(sct)
+        done = sum(1 for t in targets if is_filled(cur, t))
+        print(f"本次結束，放上 {done + already}／目標 {max_items}（本次新放 {done}）。")
 
 
 def do_run(cfg, dry_run=False, debug=False, count=None, det=None):
