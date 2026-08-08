@@ -6,7 +6,12 @@ const API_KEY = import.meta.env.VITE_SHEETS_API_KEY || "";
 
 const LOCAL_PREFIX = "tc_local_";
 
-async function callApi(action, extra = {}) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// 單次呼叫 Apps Script（不含重試）
+async function callApiOnce(action, extra = {}) {
   if (!API_URL) {
     throw new Error("尚未設定 VITE_SHEETS_API_URL，請參考 README 設定 Apps Script 網址");
   }
@@ -20,6 +25,22 @@ async function callApi(action, extra = {}) {
   const data = await res.json();
   if (!data.ok) throw new Error(data.error || "API 回傳失敗");
   return data;
+}
+
+// 呼叫 Apps Script，失敗時自動重試，擋掉 Apps Script/網路的暫時性抖動（例如打卡送出失敗）。
+// 預設多試 2 次（共 3 次），每次間隔遞增；沒設定網址等本地錯誤則不重試。
+async function callApi(action, extra = {}, retries = 2) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await callApiOnce(action, extra);
+    } catch (e) {
+      lastErr = e;
+      if (!API_URL) throw e; // 設定問題，重試無意義
+      if (attempt < retries) await sleep(600 * (attempt + 1));
+    }
+  }
+  throw lastErr;
 }
 
 const storage = {

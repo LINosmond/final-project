@@ -94,8 +94,16 @@ function doPost(e) {
 
       if (action === "appendPunch") {
         var punches = JSON.parse(readValue_(sheet, "punches") || "[]");
-        punches.push(body.entry);
-        writeValue_(sheet, "punches", JSON.stringify(punches));
+        var entry = body.entry;
+        // 依 id 去重：前端送出失敗自動重試時，若上一筆其實已寫入，這裡不會重複附加，避免出現重複打卡
+        var already = false;
+        for (var pi = 0; pi < punches.length; pi++) {
+          if (punches[pi].id === entry.id) { already = true; break; }
+        }
+        if (!already) {
+          punches.push(entry);
+          writeValue_(sheet, "punches", JSON.stringify(punches));
+        }
         return jsonResponse_({ ok: true, punches: punches });
       }
 
