@@ -202,10 +202,14 @@ def save_debug(img_bgr, inv_cells, trade_cells, det, path):
         cv2.circle(vis, c, int(det["sample_size"]) // 2, color, 2)
         cv2.putText(vis, f"{ratio:.2f}", (c[0] - 20, c[1] - int(det["sample_size"]) // 2 - 4),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
+    # 交易格：也標出偵測數值與「有球/空」判定（綠=判定有球、紅=判定空）
     for i, c in enumerate(trade_cells):
-        cv2.rectangle(vis, (c[0] - 20, c[1] - 20), (c[0] + 20, c[1] + 20), (255, 200, 0), 2)
-        cv2.putText(vis, str(i + 1), (c[0] - 6, c[1] + 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 0), 2, cv2.LINE_AA)
+        ratio = cell_fill_ratio(img_bgr, c, det)
+        filled = ratio >= det["fill_ratio"]
+        color = (0, 255, 0) if filled else (0, 0, 255)
+        cv2.rectangle(vis, (c[0] - 20, c[1] - 20), (c[0] + 20, c[1] + 20), color, 2)
+        cv2.putText(vis, f"{i + 1}:{ratio:.2f}", (c[0] - 22, c[1] - 24),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
     cv2.imwrite(path, vis)
     print(f"已存 debug 圖：{path}")
 
