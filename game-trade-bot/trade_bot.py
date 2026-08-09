@@ -4,8 +4,9 @@
 
 流程（對應你的需求）：
   1. 拍照找出右邊「道具」背包有球的格子。
-  2. 第一輪：照順序把前 N 格各放一顆球（不逐格重拍，所以快）。
-  3. 第二輪起：重拍畫面，檢查哪幾格漏擺 → 補上沒拿過的球。
+  2. 第一輪：照順序把前 N 格各放一顆球，並記住每格用了哪顆（不逐格重拍，所以快）。
+  3. 第二輪起：重拍畫面找漏擺的格子 → 先用「第一輪指派給那格的原球」補
+     （沒放到、還在背包，不會拿到已在架上的球）；那顆也補不上才拿第一輪以外的新球。
      N = F1=7、F2=8（可在程式頂端 F1_COUNT/F2_COUNT 調整）。
 
 熱鍵（系統級，焦點在遊戲上也有效）：
@@ -250,23 +251,23 @@ def run_sequence(cfg, dry_run=False, debug=False, count=None, det=None):
     def is_filled(image, center):
         return cell_fill_ratio(image, center, det) >= det["fill_ratio"]
 
-    used = set()  # 已用過的背包球（避免重複拿同一顆）
+    used = set()          # 已拿過的背包球（避免重複拿同一顆）
+    assigned = {}         # 交易格(tuple) -> 第一輪指派給它的那顆球
 
-    def place_one(target, cur_img):
-        """挑一顆沒用過的球放到 target。回傳 True=有動作、False=沒球可用/停止。"""
+    def pick_unused(cur_img):
+        """挑一顆沒拿過的球（隨機）；沒有就回 None。"""
         balls = detect_ball_cells(cur_img, inv_cells, det)
-        available = [b for b in balls if tuple(b) not in used]
-        if not available:
-            return False
-        item = random.choice(available)
-        used.add(tuple(item))
+        avail = [b for b in balls if tuple(b) not in used]
+        return random.choice(avail) if avail else None
+
+    def place_ball(item, target):
+        """把 item 放到 target（點球→放上）。回傳 True=被要求停止。"""
         if dry_run:
             pyautogui.moveTo(item[0], item[1], duration=timing["move_duration"])
             if sleep_interruptible(0.15):
                 return True
             pyautogui.moveTo(target[0], target[1], duration=timing["move_duration"])
-            sleep_interruptible(timing["between_items"])
-            return True
+            return sleep_interruptible(timing["between_items"])
         click(item[0], item[1], cfg)                       # 拿起
         if sleep_interruptible(timing["click_delay"]):
             return True
@@ -275,8 +276,7 @@ def run_sequence(cfg, dry_run=False, debug=False, count=None, det=None):
             pyautogui.press("enter")
             sleep_interruptible(cfg["quantity"]["enter_delay"])
         click(target[0], target[1], cfg)                   # 放上
-        sleep_interruptible(timing["between_items"])
-        return True
+        return sleep_interruptible(timing["between_items"])
 
     with mss.mss() as sct:
         img = grab_screen(sct)
@@ -292,27 +292,44 @@ def run_sequence(cfg, dry_run=False, debug=False, count=None, det=None):
         targets = trade_cells[:max_items]
         print(f"要放 {len(targets)} 個。")
 
-        # 第一輪：照順序前 N 格各放一顆，中途不重拍（所以快）——球放上交易後背包不會消失
+        # 第一輪：照順序前 N 格各放一顆，記住每格用了哪顆球（中途不重拍，所以快）
         for target in targets:
             if stop_event.is_set():
                 break
-            if not place_one(target, img):
+            item = pick_unused(img)
+            if item is None:
                 print("背包沒有可用的球了，停止。")
                 break
+            used.add(tuple(item))
+            assigned[tuple(target)] = item
+            if place_ball(item, target):
+                break
 
-        # 第二輪起：重拍畫面，檢查哪幾格還是空的（漏擺）→ 補上沒拿過的球
-        for _ in range(int(cfg.get("place_retries", 2))):
+        # 第二輪起：重拍找漏擺的格子補放。
+        #   先用「第一輪指派給那格的原球」補（那顆沒放到、還在背包，不會拿到已在架上的球）；
+        #   若那顆也補不上，才拿第一輪 N 顆以外的新球。
+        for rnd in range(int(cfg.get("place_retries", 2))):
             if stop_event.is_set():
                 break
             cur = grab_screen(sct)
-            misses = [t for t in targets if not is_filled(cur, t)]
+            misses = [t for t in targets if not is_filled(cur, t)]  # 保持第一輪的順序
             if not misses:
                 break
             print(f"補放漏擺的 {len(misses)} 格…")
             for target in misses:
                 if stop_event.is_set():
                     break
-                if not place_one(target, cur):
+                orig = assigned.get(tuple(target))
+                if rnd == 0 and orig is not None:
+                    item = orig                       # 先用原本那顆
+                else:
+                    item = pick_unused(cur)           # 還是沒補上 → 換第一輪以外的新球
+                    if item is None:
+                        print("背包沒有可用的球了，停止補放。")
+                        break
+                    used.add(tuple(item))
+                    assigned[tuple(target)] = item
+                if place_ball(item, target):
                     break
 
         cur = grab_screen(sct)
