@@ -879,8 +879,15 @@ def f7_do_one_trade(cfg):
         if not f7_accept_verified(cfg):
             print("F7：接受一直沒點到（或被中止），取消這筆。")
             return "接受失敗"
-        # 確認交易視窗有沒有開（用準備鈕圖案判斷）。True=開、False=沒開、None=沒樣板不判斷
-        win = f7_trade_window_open(cfg)
+        # 接受後，交易視窗要一點時間才開。在 window_wait 秒內盯著看準備鈕有沒有出現。
+        # True=開、False=一直沒開、None=沒樣板不判斷（當作開，不擋）。
+        win = None
+        wend = time.time() + float(f7.get("window_wait", 2.5))
+        while time.time() < wend and not exit_event.is_set():
+            win = f7_trade_window_open(cfg)
+            if win is None or win is True:
+                break
+            time.sleep(0.2)
         if win is not False:
             opened = True
             break
@@ -931,6 +938,14 @@ def f7_do_one_trade(cfg):
             r = f7_orange_ratio(sct, cfg)
             if r >= thr:
                 break
+            # 保險①：又跳出新的交易邀請視窗 → 這筆是空的，別再空等，回去接新的
+            if f7_trade_request_present(sct, cfg):
+                print("F7：等橘燈時又出現交易邀請 → 放棄這筆空交易，改去處理新的邀請。")
+                return "有新邀請"
+            # 保險②：交易視窗其實已經不見（準備鈕不在了）→ 也別空等
+            if f7_trade_window_open(cfg) is False:
+                print("F7：等橘燈時偵測不到交易視窗（可能沒真的開起／已關閉），放棄這筆。")
+                return "無交易視窗"
             # 每約 2 秒回報一次目前偵測到的橘色比例，避免看起來像發呆、也方便對門檻
             if waited - last_print >= 2.0:
                 print(f"F7：等橘燈中…目前橘色比例 {r:.2f} / 需要 ≥ {thr}（已等 {waited:.0f}s）")
@@ -960,6 +975,10 @@ def f7_do_one_trade(cfg):
 
 def f7_watch(cfg):
     print("F7：自動交易待命中，等有人要求交易…（再按 F7 停止）")
+    if not os.path.exists(F7_PREPARE_REF):
+        print("⚠️ F7：沒有『準備鈕』樣板（f7_prepare_ref.png），無法判斷交易視窗有沒有真的開。"
+              "建議重跑一次 python trade_bot.py --setup-f7（會多拍準備鈕），"
+              "否則接受沒開起視窗時無法自動偵測與重按。")
     with mss.mss() as sct:
         while f7_active.is_set() and not exit_event.is_set():
             try:
@@ -1062,7 +1081,8 @@ def setup_f7(cfg):
                  "btn_orange_ratio": 0.15, "btn_orange_w": 44, "btn_orange_h": 44,
                  "orange_wait": 2.5, "orange_hmin": 8, "orange_hmax": 25,
                  "prepare_score": 0.70, "prepare_search_w": 160, "prepare_search_h": 120,
-                 "fill_settle": 5.0, "end_grabs": 3, "open_retries": 2, "reopen_wait": 1.2}.items():
+                 "fill_settle": 5.0, "end_grabs": 3, "open_retries": 2, "reopen_wait": 1.2,
+                 "window_wait": 2.5}.items():
         f7.setdefault(k, v)
     cfg["f7"] = f7
     save_config(cfg)
