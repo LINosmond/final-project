@@ -763,7 +763,7 @@ def f7_press_until_orange(cfg, center, wait_s, retries, label, also_closed=False
     先檢查是否已亮（已按下）→ 已亮就不再按，避免重複按把準備狀態按掉。
     also_closed=True（確認鈕）時，交易視窗關閉（格子清空）也算成功。回傳 True=已按到。"""
     f7 = cfg["f7"]
-    ratio = f7.get("btn_orange_ratio", 0.12)
+    ratio = f7.get("btn_orange_ratio", 0.15)
     with mss.mss() as sct:
         for attempt in range(retries + 1):
             if f7_orange_at(sct, cfg, center) >= ratio:
@@ -927,7 +927,7 @@ def setup_f7(cfg):
                  "after_accept": 1.0, "after_prepare": 0.5, "after_confirm": 1.0,
                  "cooldown": 2.0, "poll": 0.4, "orange_w": 26, "orange_h": 26,
                  "click_retries": 3, "after_grab": 0.4,
-                 "btn_orange_ratio": 0.12, "btn_orange_w": 44, "btn_orange_h": 44,
+                 "btn_orange_ratio": 0.15, "btn_orange_w": 44, "btn_orange_h": 44,
                  "orange_hmin": 8, "orange_hmax": 25}.items():
         f7.setdefault(k, v)
     cfg["f7"] = f7
@@ -1022,7 +1022,7 @@ def test_f7(cfg):
     print("    分數 ≥ 門檻 → 判定『有跳出來』(會去按接受)")
     print("    球在架上偵測不到 → 把 accept_score 調低一點（例如 0.65）")
     print("=" * 56)
-    oratio = f7.get("btn_orange_ratio", 0.12)
+    oratio = f7.get("btn_orange_ratio", 0.15)
     prep = f7.get("prepare_btn")
     conf = f7.get("confirm_btn")
     print("  另外也顯示『準備／確認鈕上的橘燈比例』：按下按鈕會亮橘燈，比例越高越亮。")
