@@ -714,28 +714,38 @@ def f6_grab_once(cfg):
         press_click("right", hold)
     except pyautogui.FailSafeException:
         raise
-    sleep_interruptible(cfg.get("f7", {}).get("after_grab", 0.4))
+    sleep_interruptible(cfg.get("f7", {}).get("after_grab", 0.6))
 
 
 def f7_accept_verified(cfg):
-    """按『接受』並確認真的點到：以『交易要求視窗是否還在』判斷，
-    還在就再按一次，最多 click_retries 次。回傳 True=已接受。
-    點的是『當下偵測到的接受鈕位置』（彈窗會浮動），偵測不到才退回記住的位置。"""
+    """按『接受』並確認真的點到：按下後持續盯著看，直到『對方的要求交易彈窗消失』
+    才算接受成功、往下一步走；整段時間都還在就再按一次（最多 click_retries 次）。
+    點的是『當下偵測到的接受鈕位置』（彈窗會浮動），偵測不到才退回記住的位置。
+    回傳 True=已接受（彈窗已消失）。"""
     f7 = cfg["f7"]
     thresh = f7.get("accept_score", 0.75)
     retries = int(f7.get("click_retries", 3))
+    gone_wait = float(f7.get("accept_gone_wait", 3.0))
     with mss.mss() as sct:
         for attempt in range(retries + 1):
             score, center = f7_accept_match(sct, cfg)
             if score < thresh:
-                return True  # 找不到彈窗 = 已接受（或已關閉）
+                return True  # 彈窗已消失 = 已接受
             if attempt > 0:
-                print(f"F7：接受好像沒點到（分數 {score:.2f}），重試（第 {attempt} 次）…")
+                print(f"F7：接受後彈窗還在（分數 {score:.2f}），再按一次（第 {attempt} 次）…")
             tx, ty = center if center else f7["accept_btn"]
             click(tx, ty, cfg)
-            if sleep_interruptible(f7.get("after_accept", 1.0)):
-                return False
-        return not f7_trade_request_present(sct, cfg)
+            # 按下後在時間窗內盯著看『要求交易彈窗有沒有消失』，消失才算成功
+            end = time.time() + gone_wait
+            while time.time() < end:
+                if stop_event.is_set() or exit_event.is_set():
+                    return False
+                s2, _ = f7_accept_match(sct, cfg)
+                if s2 < thresh:
+                    return True  # 彈窗消失 = 接受成功
+                time.sleep(0.2)
+        score, _ = f7_accept_match(sct, cfg)
+        return score < thresh
 
 
 def f7_orange_at(sct, cfg, pos):
@@ -856,6 +866,8 @@ def f7_do_one_trade(cfg):
     ):
         print("F7：確認交易可能沒按到，請留意這筆是否完成。")
         return "確認未確定"
+    # 每輪最後再取一次球，為下一筆先備好
+    f6_grab_once(cfg)
     return "完成"
 
 
@@ -945,7 +957,7 @@ def setup_f7(cfg):
                  "orange_ratio": 0.25, "orange_timeout": 30,
                  "after_accept": 1.0, "after_prepare": 0.5, "after_confirm": 1.0,
                  "cooldown": 2.0, "poll": 0.4, "orange_w": 26, "orange_h": 26,
-                 "click_retries": 3, "after_grab": 0.4,
+                 "click_retries": 3, "after_grab": 0.6, "accept_gone_wait": 3.0,
                  "btn_orange_ratio": 0.15, "btn_orange_w": 44, "btn_orange_h": 44,
                  "orange_wait": 2.5, "orange_hmin": 8, "orange_hmax": 25}.items():
         f7.setdefault(k, v)
