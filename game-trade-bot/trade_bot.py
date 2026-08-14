@@ -861,12 +861,20 @@ def setup_f7(cfg):
 
     print("\n步驟 1：請朋友點你、要求交易，讓『要求交易』小視窗跳出來並【保持顯示】。")
     accept = _capture_pos("把滑鼠移到小視窗的『接受』鈕上，按 Enter：")
+    # 先把滑鼠移開再拍：避免拍到「滑鼠移上去時按鈕反白／變色」的樣子，
+    # 否則實際偵測時滑鼠不在上面，按鈕長得不一樣，分數會偏低抓不到。
+    try:
+        away_x = accept[0] - 220 if accept[0] > 260 else accept[0] + 220
+        pyautogui.moveTo(max(0, away_x), accept[1], duration=0.12)
+    except Exception:
+        pass
+    time.sleep(0.5)
     with mss.mss() as sct:
         img = grab_screen(sct)
     # 只拍『接受鈕』小圖案當樣板（不吃背景，之後背景變了也認得）
     box = _region_box(accept, f7.get("accept_w", 54), f7.get("accept_h", 44), img.shape)
     cv2.imwrite(F7_ACCEPT_REF, _crop_box(img, box))
-    print("  已拍下『接受鈕』樣板。\n")
+    print("  已拍下『接受鈕』樣板（已把滑鼠移開，拍按鈕的正常狀態）。\n")
 
     print("步驟 2：按接受把交易視窗打開（可手動），把畫面弄到看得到『準備交易』和『確認』兩顆鈕。")
     prepare = _capture_pos("把滑鼠移到『準備交易』鈕上，按 Enter：")
