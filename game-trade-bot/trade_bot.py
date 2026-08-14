@@ -606,29 +606,48 @@ def _abs_diff(a, b):
     return float(np.abs(a.astype(np.int16) - b.astype(np.int16)).mean())
 
 
-def f7_trade_request_present(sct, cfg):
-    """用『接受鈕』小樣板在附近搜尋，判斷交易要求視窗有沒有跳出來。
-    只認按鈕圖案、不吃背景，所以背景變了、彈窗位置小偏移也認得。"""
+def f7_load_accept_ref():
+    """載入『接受鈕』樣板圖（快取）。回傳影像或 None。"""
     global _f7_accept_ref
-    f7 = cfg.get("f7", {})
-    btn = f7.get("accept_btn")
-    if not btn:
-        return False
     if _f7_accept_ref is None:
         if not os.path.exists(F7_ACCEPT_REF):
-            return False
+            return None
         _f7_accept_ref = cv2.imread(F7_ACCEPT_REF)
-    if _f7_accept_ref is None:
-        return False
+    return _f7_accept_ref
+
+
+def f7_accept_match(sct, cfg):
+    """用『接受鈕』樣板在畫面上比對，回傳 (最佳分數, 位置(x,y) 或 None)。
+    預設整個螢幕都掃（交易要求視窗每次跳出的位置可能不同），
+    也可在 config 設 search_full=false 只掃記住位置附近。"""
+    f7 = cfg.get("f7", {})
+    ref = f7_load_accept_ref()
+    if ref is None:
+        return 0.0, None
     img = grab_screen(sct)
-    sbox = _region_box(btn, f7.get("search_w", 260), f7.get("search_h", 180), img.shape)
-    region = _crop_box(img, sbox)
-    th, tw = _f7_accept_ref.shape[:2]
+    ox, oy = 0, 0
+    if f7.get("search_full", True):
+        region = img
+    else:
+        btn = f7.get("accept_btn")
+        if not btn:
+            return 0.0, None
+        sbox = _region_box(btn, f7.get("search_w", 600), f7.get("search_h", 400), img.shape)
+        ox, oy = sbox[0], sbox[1]
+        region = _crop_box(img, sbox)
+    th, tw = ref.shape[:2]
     if region.shape[0] < th or region.shape[1] < tw:
-        return False
-    res = cv2.matchTemplate(region, _f7_accept_ref, cv2.TM_CCOEFF_NORMED)
-    _, maxv, _, _ = cv2.minMaxLoc(res)
-    return maxv >= f7.get("accept_score", 0.80)
+        return 0.0, None
+    res = cv2.matchTemplate(region, ref, cv2.TM_CCOEFF_NORMED)
+    _, maxv, _, maxloc = cv2.minMaxLoc(res)
+    center = (ox + maxloc[0] + tw // 2, oy + maxloc[1] + th // 2)
+    return float(maxv), center
+
+
+def f7_trade_request_present(sct, cfg):
+    """判斷交易要求視窗有沒有跳出來（只認『接受鈕』圖案，不吃背景）。"""
+    score, _ = f7_accept_match(sct, cfg)
+    return score >= cfg.get("f7", {}).get("accept_score", 0.75)
 
 
 def f7_orange_lit(sct, cfg):
@@ -689,16 +708,20 @@ def _region_snapshot(sct, center, w, h):
 
 def f7_accept_verified(cfg):
     """按『接受』並確認真的點到：以『交易要求視窗是否還在』判斷，
-    還在就再按一次，最多 click_retries 次。回傳 True=已接受。"""
+    還在就再按一次，最多 click_retries 次。回傳 True=已接受。
+    點的是『當下偵測到的接受鈕位置』（彈窗會浮動），偵測不到才退回記住的位置。"""
     f7 = cfg["f7"]
+    thresh = f7.get("accept_score", 0.75)
     retries = int(f7.get("click_retries", 3))
     with mss.mss() as sct:
         for attempt in range(retries + 1):
-            if not f7_trade_request_present(sct, cfg):
-                return True  # 彈窗已消失 = 已接受
+            score, center = f7_accept_match(sct, cfg)
+            if score < thresh:
+                return True  # 找不到彈窗 = 已接受（或已關閉）
             if attempt > 0:
-                print(f"F7：接受好像沒點到，重試（第 {attempt} 次）…")
-            click(f7["accept_btn"][0], f7["accept_btn"][1], cfg)
+                print(f"F7：接受好像沒點到（分數 {score:.2f}），重試（第 {attempt} 次）…")
+            tx, ty = center if center else f7["accept_btn"]
+            click(tx, ty, cfg)
             if sleep_interruptible(f7.get("after_accept", 1.0)):
                 return False
         return not f7_trade_request_present(sct, cfg)
@@ -854,7 +877,8 @@ def setup_f7(cfg):
 
     f7.update({"accept_btn": accept, "accept_box": box,
                "prepare_btn": prepare, "confirm_btn": confirm, "orange_pos": orange})
-    for k, v in {"accept_score": 0.80, "search_w": 260, "search_h": 180,
+    for k, v in {"accept_score": 0.75, "search_full": True,
+                 "search_w": 600, "search_h": 400,
                  "orange_ratio": 0.25, "orange_timeout": 30,
                  "after_accept": 1.0, "after_prepare": 0.5, "after_confirm": 1.0,
                  "cooldown": 2.0, "poll": 0.4, "orange_w": 26, "orange_h": 26,
@@ -938,6 +962,33 @@ def apply_speed(cfg, level):
           f"拿起後等={preset['click_delay']}, 每顆間隔={preset['between_items']} 秒）")
 
 
+def test_f7(cfg):
+    """即時比對『接受鈕』樣板，印出目前分數與位置，方便調整 accept_score。"""
+    f7 = cfg.get("f7", {})
+    if not os.path.exists(F7_ACCEPT_REF):
+        print("找不到接受鈕樣板 f7_accept_ref.png，請先執行： python trade_bot.py --setup-f7")
+        return
+    thresh = f7.get("accept_score", 0.75)
+    full = f7.get("search_full", True)
+    print("=" * 56)
+    print("  F7 接受鈕偵測測試（Ctrl+C 結束）")
+    print(f"  門檻 accept_score = {thresh}；掃描範圍 = {'整個螢幕' if full else '記住位置附近'}")
+    print("  請讓『要求交易』小視窗跳出來，觀察分數：")
+    print("    分數 ≥ 門檻 → 判定『有跳出來』(會去按接受)")
+    print("    球在架上偵測不到 → 把 accept_score 調低一點（例如 0.65）")
+    print("=" * 56)
+    try:
+        with mss.mss() as sct:
+            while True:
+                score, center = f7_accept_match(sct, cfg)
+                hit = "✅有" if score >= thresh else "  無"
+                loc = f"位置{center}" if center else "位置-"
+                print(f"  分數 {score:.3f}  {hit}   {loc}      ", end="\r")
+                time.sleep(0.3)
+    except KeyboardInterrupt:
+        print("\n結束測試。")
+
+
 def main():
     parser = argparse.ArgumentParser(description="遊戲交易自動精靈")
     parser.add_argument("--now", action="store_true", help="不等 F3，倒數後直接執行一次")
@@ -947,6 +998,7 @@ def main():
     parser.add_argument("--turbo", action="store_true", help="極速搬運（最快，太快可能有些沒點到）")
     parser.add_argument("--count", type=int, default=None, help="這次搬幾顆（覆蓋 config 的 max_items）")
     parser.add_argument("--setup-f7", action="store_true", help="設定 F7 自動交易（需要一次真實交易）")
+    parser.add_argument("--test-f7", action="store_true", help="即時顯示『接受鈕』比對分數，用來調整偵測")
     args = parser.parse_args()
 
     cfg = load_config()
@@ -954,6 +1006,9 @@ def main():
         if keyboard is None:
             print("提醒：沒裝 keyboard，記點要回終端機按 Enter。")
         setup_f7(cfg)
+        return
+    if getattr(args, "test_f7", False):
+        test_f7(cfg)
         return
     if args.turbo:
         apply_speed(cfg, "turbo")
