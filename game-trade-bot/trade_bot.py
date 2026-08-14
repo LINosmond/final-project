@@ -120,6 +120,7 @@ def press_click(button="left", hold=0.03):
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
 F7_ACCEPT_REF = os.path.join(HERE, "f7_accept_ref.png")  # F7：交易要求視窗樣本
+F7_PREPARE_REF = os.path.join(HERE, "f7_prepare_ref.png")  # F7：準備鈕樣本（判斷交易視窗在不在）
 
 # 執行控制用的旗標
 stop_event = threading.Event()     # 被設定 = 立刻停止目前這次搬運
@@ -132,6 +133,7 @@ f6_active = threading.Event()          # 被設定 = F6 固定位置連點右鍵
 f6_lock = threading.Lock()             # 避免 F6 位置設定被重複觸發
 f7_active = threading.Event()          # 被設定 = F7 自動交易待命中
 _f7_accept_ref = None                  # 快取：交易要求視窗樣本圖
+_f7_prepare_ref = None                 # 快取：準備鈕樣本圖
 
 
 # ---------------------------------------------------------------------------
@@ -668,6 +670,44 @@ def f7_trade_request_present(sct, cfg):
     return score >= cfg.get("f7", {}).get("accept_score", 0.75)
 
 
+def f7_load_prepare_ref():
+    """載入『準備鈕』樣板圖（快取）。回傳影像或 None。"""
+    global _f7_prepare_ref
+    if _f7_prepare_ref is None:
+        if not os.path.exists(F7_PREPARE_REF):
+            return None
+        _f7_prepare_ref = cv2.imread(F7_PREPARE_REF)
+    return _f7_prepare_ref
+
+
+def f7_prepare_score(sct, cfg):
+    """用『準備鈕』樣板在其記住位置附近比對，回傳最佳分數。沒有樣板回傳 None。"""
+    f7 = cfg.get("f7", {})
+    ref = f7_load_prepare_ref()
+    btn = f7.get("prepare_btn")
+    if ref is None or not btn:
+        return None
+    img = grab_screen(sct)
+    sbox = _region_box(btn, f7.get("prepare_search_w", 160), f7.get("prepare_search_h", 120), img.shape)
+    region = _crop_box(img, sbox)
+    th, tw = ref.shape[:2]
+    if region.shape[0] < th or region.shape[1] < tw:
+        return None
+    res = cv2.matchTemplate(region, ref, cv2.TM_CCOEFF_NORMED)
+    _, maxv, _, _ = cv2.minMaxLoc(res)
+    return float(maxv)
+
+
+def f7_trade_window_open(cfg):
+    """交易視窗在不在：用『準備鈕』圖案判斷。
+    回傳 True=在、False=不在、None=沒有樣板無法判斷（退回用放球數量判斷）。"""
+    with mss.mss() as sct:
+        score = f7_prepare_score(sct, cfg)
+    if score is None:
+        return None
+    return score >= cfg.get("f7", {}).get("prepare_score", 0.70)
+
+
 def f7_orange_lit(sct, cfg):
     """偵測橘燈是否亮（對方準備好了）。用橘色比例判斷。"""
     f7 = cfg.get("f7", {})
@@ -845,6 +885,11 @@ def f7_do_one_trade(cfg):
         return f"未放滿({filled}/8)"
     # 步驟間取球
     f6_grab_once(cfg)
+    # 3.5) 真的有交易視窗才按準備（用準備鈕圖案判斷，避免對著沒視窗的空畫面亂按）
+    win = f7_trade_window_open(cfg)
+    if win is False:
+        print("F7：沒偵測到交易視窗（準備鈕不在畫面上），不按準備，取消這筆。")
+        return "無交易視窗"
     # 4) 按準備交易（確認有點到：按鈕上亮橘燈）
     print("F7：8 格都有球 → 按準備交易")
     if not f7_press_until_orange(
@@ -954,6 +999,19 @@ def setup_f7(cfg):
 
     print("步驟 2：按接受把交易視窗打開（可手動），把畫面弄到看得到『準備交易』和『確認』兩顆鈕。")
     prepare = _capture_pos("把滑鼠移到『準備交易』鈕上，按 Enter：")
+    # 順便拍下『準備鈕』樣板，之後用來判斷交易視窗在不在（滑鼠先移開，拍正常狀態）
+    try:
+        away_x = prepare[0] - 220 if prepare[0] > 260 else prepare[0] + 220
+        pyautogui.moveTo(max(0, away_x), prepare[1], duration=0.12)
+    except Exception:
+        pass
+    time.sleep(0.5)
+    with mss.mss() as sct:
+        img2 = grab_screen(sct)
+    pbox = _region_box(prepare, f7.get("prepare_w", 90), f7.get("prepare_h", 44), img2.shape)
+    cv2.imwrite(F7_PREPARE_REF, _crop_box(img2, pbox))
+    print("  已拍下『準備鈕』樣板（用來判斷有沒有交易視窗）。\n")
+
     confirm = _capture_pos("把滑鼠移到『確認（完成交易）』鈕上，按 Enter：")
 
     print("步驟 3：讓對方也按準備、讓旁邊的『橘燈』亮起來並保持亮著。")
@@ -969,7 +1027,8 @@ def setup_f7(cfg):
                  "click_retries": 3, "after_grab": 0.6,
                  "accept_gone_wait": 3.0, "accept_gone_reads": 3,
                  "btn_orange_ratio": 0.15, "btn_orange_w": 44, "btn_orange_h": 44,
-                 "orange_wait": 2.5, "orange_hmin": 8, "orange_hmax": 25}.items():
+                 "orange_wait": 2.5, "orange_hmin": 8, "orange_hmax": 25,
+                 "prepare_score": 0.70, "prepare_search_w": 160, "prepare_search_h": 120}.items():
         f7.setdefault(k, v)
     cfg["f7"] = f7
     save_config(cfg)
