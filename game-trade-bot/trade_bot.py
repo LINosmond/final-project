@@ -144,7 +144,25 @@ def load_config():
             "請先執行校正工具產生設定：python calibrate.py"
         )
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+        text = f.read()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        # 容錯：檔案結尾多了重複／多餘內容（Extra data）時，只取第一個完整的 JSON 物件，
+        # 並清乾淨存回，避免每次都壞。若連第一段都不完整才真的放棄。
+        try:
+            obj, _end = json.JSONDecoder().raw_decode(text.lstrip())
+        except Exception:
+            sys.exit(
+                f"config.json 格式壞掉（{e}）。\n"
+                "請用記事本檢查，或重新校正產生新的設定：python calibrate.py"
+            )
+        print("提醒：config.json 結尾有多餘內容，已自動忽略並修正存回。")
+        try:
+            save_config(obj)
+        except Exception:
+            pass
+        return obj
 
 
 def save_config(cfg):
