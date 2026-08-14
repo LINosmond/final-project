@@ -663,14 +663,79 @@ def f7_ready(cfg):
     return all(f7.get(k) for k in need) and os.path.exists(F7_ACCEPT_REF)
 
 
-def f7_do_one_trade(cfg):
-    """完成一筆交易的流程；回傳文字結果。"""
+def f6_grab_once(cfg):
+    """到 F6 記住的位置點一次右鍵『取球』（把置物櫃的球拿到背包）。
+    沒設定 F6 位置就直接跳過，不影響流程。"""
+    p = f6_pos(cfg)
+    if not p:
+        return
+    d = cfg["timing"].get("move_duration", 0.15)
+    hold = cfg["timing"].get("click_hold", 0.03)
+    try:
+        pyautogui.moveTo(p[0], p[1], duration=d)
+        time.sleep(0.02)
+        press_click("right", hold)
+    except pyautogui.FailSafeException:
+        raise
+    sleep_interruptible(cfg.get("f7", {}).get("after_grab", 0.4))
+
+
+def _region_snapshot(sct, center, w, h):
+    """抓某個中心點附近一小塊畫面（複本），用來比對點擊前後有沒有變化。"""
+    img = grab_screen(sct)
+    box = _region_box(center, w, h, img.shape)
+    return _crop_box(img, box).copy()
+
+
+def f7_accept_verified(cfg):
+    """按『接受』並確認真的點到：以『交易要求視窗是否還在』判斷，
+    還在就再按一次，最多 click_retries 次。回傳 True=已接受。"""
     f7 = cfg["f7"]
-    # 1) 按接受，等交易視窗打開
+    retries = int(f7.get("click_retries", 3))
+    with mss.mss() as sct:
+        for attempt in range(retries + 1):
+            if not f7_trade_request_present(sct, cfg):
+                return True  # 彈窗已消失 = 已接受
+            if attempt > 0:
+                print(f"F7：接受好像沒點到，重試（第 {attempt} 次）…")
+            click(f7["accept_btn"][0], f7["accept_btn"][1], cfg)
+            if sleep_interruptible(f7.get("after_accept", 1.0)):
+                return False
+        return not f7_trade_request_present(sct, cfg)
+
+
+def f7_click_change_verified(cfg, center, change_thresh, wait_s, w, h, retries, label):
+    """點一個位置並確認有點到：比對點擊前後該按鈕附近有沒有變化。
+    有變化 = 有點到；沒變化就再點一次（最多 retries 次）。回傳 True=有點到。"""
+    with mss.mss() as sct:
+        before = _region_snapshot(sct, center, w, h)
+        for attempt in range(retries + 1):
+            click(center[0], center[1], cfg)
+            if sleep_interruptible(wait_s):
+                return False
+            after = _region_snapshot(sct, center, w, h)
+            if _abs_diff(before, after) >= change_thresh:
+                return True
+            print(f"F7：{label} 好像沒點到，重試（第 {attempt + 1} 次）…")
+        return False
+
+
+def f7_do_one_trade(cfg):
+    """完成一筆交易的流程；每個步驟之間會到 F6 位置取一次球。回傳文字結果。"""
+    f7 = cfg["f7"]
+    retries = int(f7.get("click_retries", 3))
+    vw = int(f7.get("verify_w", 60))
+    vh = int(f7.get("verify_h", 44))
+
+    # 0) 先取一次球
+    f6_grab_once(cfg)
+    # 1) 按接受（確認有點到，沒到就再按）
     print("F7：偵測到交易要求 → 按接受")
-    click(f7["accept_btn"][0], f7["accept_btn"][1], cfg)
-    if sleep_interruptible(f7.get("after_accept", 1.0)):
-        return "中止"
+    if not f7_accept_verified(cfg):
+        print("F7：接受一直沒點到（或被中止），取消這筆。")
+        return "接受失敗"
+    # 步驟間取球
+    f6_grab_once(cfg)
     # 2) 放滿 8 格綠球（沿用主搬運邏輯）
     print("F7：放球…")
     stop_event.clear()
@@ -680,11 +745,18 @@ def f7_do_one_trade(cfg):
     if filled < 8:
         print(f"F7：只放上 {filled}/8，沒放滿——不按準備，取消這筆（請檢查背包球夠不夠、偵測準不準）。")
         return f"未放滿({filled}/8)"
-    # 4) 按準備交易
+    # 步驟間取球
+    f6_grab_once(cfg)
+    # 4) 按準備交易（確認有點到）
     print("F7：8 格都有球 → 按準備交易")
-    click(f7["prepare_btn"][0], f7["prepare_btn"][1], cfg)
-    if sleep_interruptible(f7.get("after_prepare", 0.5)):
-        return "中止"
+    if not f7_click_change_verified(
+        cfg, f7["prepare_btn"], f7.get("prepare_change", 10.0),
+        f7.get("after_prepare", 0.5), vw, vh, retries, "準備交易"
+    ):
+        print("F7：準備交易一直沒點到（或被中止），這筆未完成。")
+        return "準備失敗"
+    # 步驟間取球
+    f6_grab_once(cfg)
     # 5) 等橘燈亮（對方也準備好）
     print("F7：等對方準備（橘燈）…")
     waited = 0.0
@@ -698,10 +770,14 @@ def f7_do_one_trade(cfg):
         if not f7_orange_lit(sct, cfg):
             print(f"F7：等橘燈逾時（{timeout}s），這筆未完成。")
             return "橘燈逾時"
-    # 6) 按確認完成
+    # 6) 按確認完成（確認有點到：交易視窗關閉→附近畫面會變）
     print("F7：橘燈亮 → 按確認，完成交易 ✅")
-    click(f7["confirm_btn"][0], f7["confirm_btn"][1], cfg)
-    sleep_interruptible(f7.get("after_confirm", 1.0))
+    if not f7_click_change_verified(
+        cfg, f7["confirm_btn"], f7.get("confirm_change", 10.0),
+        f7.get("after_confirm", 1.0), vw, vh, retries, "確認交易"
+    ):
+        print("F7：確認交易可能沒點到，請留意這筆是否完成。")
+        return "確認未確定"
     return "完成"
 
 
@@ -781,7 +857,9 @@ def setup_f7(cfg):
     for k, v in {"accept_score": 0.80, "search_w": 260, "search_h": 180,
                  "orange_ratio": 0.25, "orange_timeout": 30,
                  "after_accept": 1.0, "after_prepare": 0.5, "after_confirm": 1.0,
-                 "cooldown": 2.0, "poll": 0.4, "orange_w": 26, "orange_h": 26}.items():
+                 "cooldown": 2.0, "poll": 0.4, "orange_w": 26, "orange_h": 26,
+                 "click_retries": 3, "prepare_change": 10.0, "confirm_change": 10.0,
+                 "verify_w": 60, "verify_h": 44, "after_grab": 0.4}.items():
         f7.setdefault(k, v)
     cfg["f7"] = f7
     save_config(cfg)
