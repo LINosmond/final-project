@@ -18,6 +18,7 @@
   F6 = 在固定位置連點右鍵 開／關（第一次按會請你設定位置）；Shift+F6 重新設定
   F7 = 自動交易 開／關（偵測有人要求交易→接受→放滿8格→準備→橘燈亮→確認）
        空檔時會自動到 F6 的位置右鍵取置物櫃的球補貨（需先按 F6 設定好位置）
+  F8 = 自動交易 開／關（同 F7，但不去置物櫃補球）
        第一次要先設定：python trade_bot.py --setup-f7
 
 偵測方式：用顏色判斷。綠色球是偏黃綠／橄欖綠，空格是深藍色，
@@ -131,8 +132,9 @@ two_click_active = threading.Event()   # 被設定 = F5 連續兩點進行中
 two_click_lock = threading.Lock()      # 避免 F5 兩點設定被重複觸發
 f6_active = threading.Event()          # 被設定 = F6 固定位置連點右鍵進行中
 f6_lock = threading.Lock()             # 避免 F6 位置設定被重複觸發
-f7_active = threading.Event()          # 被設定 = F7 自動交易待命中
+f7_active = threading.Event()          # 被設定 = 自動交易待命中（F7/F8 共用）
 _f7_accept_ref = None                  # 快取：交易要求視窗樣本圖
+_f7_restock = True                     # 這次待命要不要去 F6 取置物櫃球補貨（F7=True, F8=False）
 
 
 # ---------------------------------------------------------------------------
@@ -702,7 +704,7 @@ def f7_restock(cfg):
     """空檔時到 F6 的位置右鍵取置物櫃的球，把背包補一補。"""
     f7 = cfg.get("f7", {})
     pos = f6_pos(cfg)
-    if not pos or not f7.get("restock", True):
+    if not pos or not _f7_restock or not f7.get("restock", True):
         return
     clicks = int(f7.get("restock_clicks", 3))
     for _ in range(clicks):
@@ -715,7 +717,8 @@ def f7_restock(cfg):
 
 
 def f7_watch(cfg):
-    print("F7：自動交易待命中，等有人要求交易…（空檔會自動去 F6 位置取置物櫃的球補貨；再按 F7 停止）")
+    mode = "會自動去 F6 取置物櫃球補貨" if _f7_restock else "不補貨"
+    print(f"自動交易待命中（{mode}），等有人要求交易…（再按 F7/F8 停止）")
     last_restock = 0.0
     with mss.mss() as sct:
         while f7_active.is_set() and not exit_event.is_set():
@@ -746,16 +749,26 @@ def f7_watch(cfg):
     print("F7：已停止自動交易待命。")
 
 
-def on_f7(cfg):
+def _f7_start(cfg, restock):
+    global _f7_restock
     if f7_active.is_set():
         f7_active.clear()
-        print("F7：停止自動交易。")
+        print("停止自動交易。")
         return
     if not f7_ready(cfg):
-        print("F7：還沒設定好。請先關掉本程式，執行： python trade_bot.py --setup-f7")
+        print("自動交易還沒設定好。請先關掉本程式，執行： python trade_bot.py --setup-f7")
         return
+    _f7_restock = restock
     f7_active.set()
     threading.Thread(target=f7_watch, args=(cfg,), daemon=True).start()
+
+
+def on_f7(cfg):
+    _f7_start(cfg, True)    # 有補貨
+
+
+def on_f8(cfg):
+    _f7_start(cfg, False)   # 不補貨
 
 
 def _capture_pos(prompt):
@@ -816,6 +829,7 @@ def hotkey_loop(cfg, dry_run, debug):
     keyboard.add_hotkey("f6", lambda: on_f6(cfg))
     keyboard.add_hotkey("shift+f6", lambda: on_reset_f6(cfg))
     keyboard.add_hotkey("f7", lambda: on_f7(cfg))
+    keyboard.add_hotkey("f8", lambda: on_f8(cfg))
     two_set = bool(two_click_cfg(cfg).get("pos_a"))
     f6_set = bool(f6_pos(cfg))
     print("=" * 52)
@@ -829,8 +843,9 @@ def hotkey_loop(cfg, dry_run, debug):
     print("    Shift+F5 = 重新設定 F5 的兩個位置")
     print("    F6 = 在固定位置連點右鍵 開／關" + ("" if f6_set else "（第一次按會先請你設定位置）"))
     print("    Shift+F6 = 重新設定 F6 的位置")
-    print("    F7 = 自動交易 開／關（偵測有人要求交易→接受→放滿8格→準備→橘燈亮→確認）"
-          + ("" if f7_ready(cfg) else "（尚未設定：python trade_bot.py --setup-f7）"))
+    _f7hint = "" if f7_ready(cfg) else "（尚未設定：python trade_bot.py --setup-f7）"
+    print("    F7 = 自動交易 開／關（接受→放滿8格→準備→橘燈→確認；空檔去 F6 取球補貨）" + _f7hint)
+    print("    F8 = 自動交易 開／關（同 F7，但不去置物櫃補球）" + _f7hint)
     print("    （滑鼠甩到螢幕左上角 = 緊急停止；要結束程式關掉視窗或 Ctrl+C）")
     print("=" * 52)
     try:
