@@ -758,28 +758,47 @@ def _filled_slots_in(img, cfg):
     return sum(1 for s in grid_cells(cfg["trade"]) if cell_fill_ratio(img, s, det) >= det["fill_ratio"])
 
 
-def f7_press_until_orange(cfg, center, wait_s, retries, label, also_closed=False):
-    """按一個按鈕，並用『按鈕上亮橘燈』確認真的按到；沒亮就再按（最多 retries 次）。
-    先檢查是否已亮（已按下）→ 已亮就不再按，避免重複按把準備狀態按掉。
-    also_closed=True（確認鈕）時，交易視窗關閉（格子清空）也算成功。回傳 True=已按到。"""
+def f7_wait_orange(sct, cfg, center, seconds, also_closed=False):
+    """在 seconds 內持續盯著看，某位置的橘燈有沒有亮起來（橘燈是按下後才慢慢亮，
+    只看一次容易剛好沒亮到）。中途亮了就回 True；also_closed=True 時視窗關閉也算。"""
     f7 = cfg["f7"]
     ratio = f7.get("btn_orange_ratio", 0.15)
-    with mss.mss() as sct:
-        for attempt in range(retries + 1):
-            if f7_orange_at(sct, cfg, center) >= ratio:
-                return True  # 橘燈已亮 = 已按下
-            if also_closed and _filled_slots_in(grab_screen(sct), cfg) == 0:
-                return True  # 交易視窗已關 = 已完成
-            if attempt > 0:
-                print(f"F7：{label} 好像沒按到，重試（第 {attempt} 次）…")
-            click(center[0], center[1], cfg)
-            if sleep_interruptible(wait_s):
-                return False
+    end = time.time() + seconds
+    while time.time() < end:
+        if exit_event.is_set() or stop_event.is_set():
+            return False
         if f7_orange_at(sct, cfg, center) >= ratio:
             return True
         if also_closed and _filled_slots_in(grab_screen(sct), cfg) == 0:
             return True
-        return False
+        time.sleep(0.15)
+    return False
+
+
+def f7_press_until_orange(cfg, center, wait_s, retries, label, also_closed=False):
+    """按一個按鈕，並用『按鈕上亮橘燈』確認真的按到。
+    按下後在一段時間窗內持續盯著看（不是只看一次），這段時間內亮了就成功；
+    整段都沒亮才再按一次（最多 retries 次）。已亮就不再按，避免把準備狀態按掉。
+    also_closed=True（確認鈕）時，交易視窗關閉（格子清空）也算成功。回傳 True=已按到。"""
+    f7 = cfg["f7"]
+    ratio = f7.get("btn_orange_ratio", 0.15)
+    orange_wait = max(float(wait_s), float(f7.get("orange_wait", 2.5)))
+    with mss.mss() as sct:
+        # 一開始就亮 = 已按下（例如上一輪已按），不要再按
+        if f7_orange_at(sct, cfg, center) >= ratio:
+            return True
+        if also_closed and _filled_slots_in(grab_screen(sct), cfg) == 0:
+            return True
+        for attempt in range(retries + 1):
+            if attempt > 0:
+                print(f"F7：{label} 這段時間都沒偵測到橘燈，再按一次（第 {attempt} 次）…")
+            click(center[0], center[1], cfg)
+            # 按下後在時間窗內輪詢等橘燈亮，避免剛好那一瞬間還沒亮就誤判
+            if f7_wait_orange(sct, cfg, center, orange_wait, also_closed=also_closed):
+                return True
+            if stop_event.is_set() or exit_event.is_set():
+                return False
+        return f7_orange_at(sct, cfg, center) >= ratio
 
 
 def f7_do_one_trade(cfg):
@@ -928,7 +947,7 @@ def setup_f7(cfg):
                  "cooldown": 2.0, "poll": 0.4, "orange_w": 26, "orange_h": 26,
                  "click_retries": 3, "after_grab": 0.4,
                  "btn_orange_ratio": 0.15, "btn_orange_w": 44, "btn_orange_h": 44,
-                 "orange_hmin": 8, "orange_hmax": 25}.items():
+                 "orange_wait": 2.5, "orange_hmin": 8, "orange_hmax": 25}.items():
         f7.setdefault(k, v)
     cfg["f7"] = f7
     save_config(cfg)
