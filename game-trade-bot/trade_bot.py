@@ -717,13 +717,6 @@ def f6_grab_once(cfg):
     sleep_interruptible(cfg.get("f7", {}).get("after_grab", 0.4))
 
 
-def _region_snapshot(sct, center, w, h):
-    """抓某個中心點附近一小塊畫面（複本），用來比對點擊前後有沒有變化。"""
-    img = grab_screen(sct)
-    box = _region_box(center, w, h, img.shape)
-    return _crop_box(img, box).copy()
-
-
 def f7_accept_verified(cfg):
     """按『接受』並確認真的點到：以『交易要求視窗是否還在』判斷，
     還在就再按一次，最多 click_retries 次。回傳 True=已接受。
@@ -745,19 +738,47 @@ def f7_accept_verified(cfg):
         return not f7_trade_request_present(sct, cfg)
 
 
-def f7_click_change_verified(cfg, center, change_thresh, wait_s, w, h, retries, label):
-    """點一個位置並確認有點到：比對點擊前後該按鈕附近有沒有變化。
-    有變化 = 有點到；沒變化就再點一次（最多 retries 次）。回傳 True=有點到。"""
+def f7_orange_at(sct, cfg, pos):
+    """某個位置有沒有亮『橘燈』（按下準備／確認後按鈕上會亮橘燈）。
+    用橘色比例判斷，跟等對方的橘燈同一種顏色，但這裡看的是『按鈕自己的位置』。"""
+    f7 = cfg.get("f7", {})
+    img = grab_screen(sct)
+    box = _region_box(pos, f7.get("btn_orange_w", 44), f7.get("btn_orange_h", 44), img.shape)
+    crop = _crop_box(img, box)
+    if crop.size == 0:
+        return 0.0
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    lo = np.array([f7.get("orange_hmin", 8), 110, 110], dtype=np.uint8)
+    hi = np.array([f7.get("orange_hmax", 25), 255, 255], dtype=np.uint8)
+    return float(cv2.inRange(hsv, lo, hi).mean()) / 255.0
+
+
+def _filled_slots_in(img, cfg):
+    det = cfg["detection"]
+    return sum(1 for s in grid_cells(cfg["trade"]) if cell_fill_ratio(img, s, det) >= det["fill_ratio"])
+
+
+def f7_press_until_orange(cfg, center, wait_s, retries, label, also_closed=False):
+    """按一個按鈕，並用『按鈕上亮橘燈』確認真的按到；沒亮就再按（最多 retries 次）。
+    先檢查是否已亮（已按下）→ 已亮就不再按，避免重複按把準備狀態按掉。
+    also_closed=True（確認鈕）時，交易視窗關閉（格子清空）也算成功。回傳 True=已按到。"""
+    f7 = cfg["f7"]
+    ratio = f7.get("btn_orange_ratio", 0.12)
     with mss.mss() as sct:
-        before = _region_snapshot(sct, center, w, h)
         for attempt in range(retries + 1):
+            if f7_orange_at(sct, cfg, center) >= ratio:
+                return True  # 橘燈已亮 = 已按下
+            if also_closed and _filled_slots_in(grab_screen(sct), cfg) == 0:
+                return True  # 交易視窗已關 = 已完成
+            if attempt > 0:
+                print(f"F7：{label} 好像沒按到，重試（第 {attempt} 次）…")
             click(center[0], center[1], cfg)
             if sleep_interruptible(wait_s):
                 return False
-            after = _region_snapshot(sct, center, w, h)
-            if _abs_diff(before, after) >= change_thresh:
-                return True
-            print(f"F7：{label} 好像沒點到，重試（第 {attempt + 1} 次）…")
+        if f7_orange_at(sct, cfg, center) >= ratio:
+            return True
+        if also_closed and _filled_slots_in(grab_screen(sct), cfg) == 0:
+            return True
         return False
 
 
@@ -765,8 +786,6 @@ def f7_do_one_trade(cfg):
     """完成一筆交易的流程；每個步驟之間會到 F6 位置取一次球。回傳文字結果。"""
     f7 = cfg["f7"]
     retries = int(f7.get("click_retries", 3))
-    vw = int(f7.get("verify_w", 60))
-    vh = int(f7.get("verify_h", 44))
 
     # 0) 先取一次球
     f6_grab_once(cfg)
@@ -788,13 +807,12 @@ def f7_do_one_trade(cfg):
         return f"未放滿({filled}/8)"
     # 步驟間取球
     f6_grab_once(cfg)
-    # 4) 按準備交易（確認有點到）
+    # 4) 按準備交易（確認有點到：按鈕上亮橘燈）
     print("F7：8 格都有球 → 按準備交易")
-    if not f7_click_change_verified(
-        cfg, f7["prepare_btn"], f7.get("prepare_change", 10.0),
-        f7.get("after_prepare", 0.5), vw, vh, retries, "準備交易"
+    if not f7_press_until_orange(
+        cfg, f7["prepare_btn"], f7.get("after_prepare", 0.5), retries, "準備交易"
     ):
-        print("F7：準備交易一直沒點到（或被中止），這筆未完成。")
+        print("F7：準備交易一直沒按到（橘燈沒亮／被中止），這筆未完成。")
         return "準備失敗"
     # 步驟間取球
     f6_grab_once(cfg)
@@ -811,13 +829,13 @@ def f7_do_one_trade(cfg):
         if not f7_orange_lit(sct, cfg):
             print(f"F7：等橘燈逾時（{timeout}s），這筆未完成。")
             return "橘燈逾時"
-    # 6) 按確認完成（確認有點到：交易視窗關閉→附近畫面會變）
+    # 6) 按確認完成（確認有點到：按鈕上亮橘燈，或交易視窗關閉）
     print("F7：橘燈亮 → 按確認，完成交易 ✅")
-    if not f7_click_change_verified(
-        cfg, f7["confirm_btn"], f7.get("confirm_change", 10.0),
-        f7.get("after_confirm", 1.0), vw, vh, retries, "確認交易"
+    if not f7_press_until_orange(
+        cfg, f7["confirm_btn"], f7.get("after_confirm", 1.0), retries,
+        "確認交易", also_closed=True
     ):
-        print("F7：確認交易可能沒點到，請留意這筆是否完成。")
+        print("F7：確認交易可能沒按到，請留意這筆是否完成。")
         return "確認未確定"
     return "完成"
 
@@ -908,8 +926,9 @@ def setup_f7(cfg):
                  "orange_ratio": 0.25, "orange_timeout": 30,
                  "after_accept": 1.0, "after_prepare": 0.5, "after_confirm": 1.0,
                  "cooldown": 2.0, "poll": 0.4, "orange_w": 26, "orange_h": 26,
-                 "click_retries": 3, "prepare_change": 10.0, "confirm_change": 10.0,
-                 "verify_w": 60, "verify_h": 44, "after_grab": 0.4}.items():
+                 "click_retries": 3, "after_grab": 0.4,
+                 "btn_orange_ratio": 0.12, "btn_orange_w": 44, "btn_orange_h": 44,
+                 "orange_hmin": 8, "orange_hmax": 25}.items():
         f7.setdefault(k, v)
     cfg["f7"] = f7
     save_config(cfg)
@@ -1003,13 +1022,23 @@ def test_f7(cfg):
     print("    分數 ≥ 門檻 → 判定『有跳出來』(會去按接受)")
     print("    球在架上偵測不到 → 把 accept_score 調低一點（例如 0.65）")
     print("=" * 56)
+    oratio = f7.get("btn_orange_ratio", 0.12)
+    prep = f7.get("prepare_btn")
+    conf = f7.get("confirm_btn")
+    print("  另外也顯示『準備／確認鈕上的橘燈比例』：按下按鈕會亮橘燈，比例越高越亮。")
+    print(f"  目前橘燈門檻 btn_orange_ratio = {oratio}（按下時的比例要 ≥ 這個值才算按到）")
+    print("=" * 56)
     try:
         with mss.mss() as sct:
             while True:
                 score, center = f7_accept_match(sct, cfg)
                 hit = "✅有" if score >= thresh else "  無"
-                loc = f"位置{center}" if center else "位置-"
-                print(f"  分數 {score:.3f}  {hit}   {loc}      ", end="\r")
+                po = f7_orange_at(sct, cfg, prep) if prep else 0.0
+                co = f7_orange_at(sct, cfg, conf) if conf else 0.0
+                pm = "亮" if po >= oratio else " "
+                cm = "亮" if co >= oratio else " "
+                print(f"  接受分數 {score:.3f} {hit} | 準備橘燈 {po:.2f}{pm} | 確認橘燈 {co:.2f}{cm}   ",
+                      end="\r")
                 time.sleep(0.3)
     except KeyboardInterrupt:
         print("\n結束測試。")
