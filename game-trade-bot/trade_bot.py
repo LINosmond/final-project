@@ -726,26 +726,35 @@ def f7_accept_verified(cfg):
     thresh = f7.get("accept_score", 0.75)
     retries = int(f7.get("click_retries", 3))
     gone_wait = float(f7.get("accept_gone_wait", 3.0))
+    need_gone = int(f7.get("accept_gone_reads", 3))  # 要連續幾次讀到「不見」才算真的消失
     with mss.mss() as sct:
         for attempt in range(retries + 1):
+            # 一律先按（進到這裡代表 watch 已確認彈窗出現，不該還沒按就跳過）。
+            # 按當下偵測到的位置；分數太低（沒把握）就退回記住的位置。
             score, center = f7_accept_match(sct, cfg)
-            if score < thresh:
-                return True  # 彈窗已消失 = 已接受
+            tx, ty = center if (center and score >= thresh) else f7["accept_btn"]
             if attempt > 0:
-                print(f"F7：接受後彈窗還在（分數 {score:.2f}），再按一次（第 {attempt} 次）…")
-            tx, ty = center if center else f7["accept_btn"]
+                print(f"F7：接受後彈窗還在，再按一次（第 {attempt} 次）…")
             click(tx, ty, cfg)
-            # 按下後在時間窗內盯著看『要求交易彈窗有沒有消失』，消失才算成功
+            # 盯著看彈窗有沒有消失；要『連續 need_gone 次』都讀到不見才算真的消失，
+            # 避免樣板比對抖動、單一格剛好讀到低分就誤判成已接受。
             end = time.time() + gone_wait
+            streak = 0
             while time.time() < end:
                 if stop_event.is_set() or exit_event.is_set():
                     return False
                 s2, _ = f7_accept_match(sct, cfg)
-                if s2 < thresh:
-                    return True  # 彈窗消失 = 接受成功
+                streak = streak + 1 if s2 < thresh else 0
+                if streak >= need_gone:
+                    return True  # 連續多次都不見 = 接受成功
                 time.sleep(0.2)
-        score, _ = f7_accept_match(sct, cfg)
-        return score < thresh
+        # 收尾：也要連續讀到不見才算成功
+        for _ in range(need_gone):
+            s3, _ = f7_accept_match(sct, cfg)
+            if s3 >= thresh:
+                return False
+            time.sleep(0.1)
+        return True
 
 
 def f7_orange_at(sct, cfg, pos):
@@ -957,7 +966,8 @@ def setup_f7(cfg):
                  "orange_ratio": 0.25, "orange_timeout": 30,
                  "after_accept": 1.0, "after_prepare": 0.5, "after_confirm": 1.0,
                  "cooldown": 2.0, "poll": 0.4, "orange_w": 26, "orange_h": 26,
-                 "click_retries": 3, "after_grab": 0.6, "accept_gone_wait": 3.0,
+                 "click_retries": 3, "after_grab": 0.6,
+                 "accept_gone_wait": 3.0, "accept_gone_reads": 3,
                  "btn_orange_ratio": 0.15, "btn_orange_w": 44, "btn_orange_h": 44,
                  "orange_wait": 2.5, "orange_hmin": 8, "orange_hmax": 25}.items():
         f7.setdefault(k, v)
