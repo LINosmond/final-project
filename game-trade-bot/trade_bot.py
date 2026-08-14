@@ -883,11 +883,14 @@ def f7_do_one_trade(cfg):
     print("F7：放球…")
     stop_event.clear()
     run_sequence(cfg, count=8, det=cfg["detection"])
-    # 3) 確認 8 格都有球
+    # 3) 放完後最多等 fill_settle 秒讓格子補到 8；不論最後幾顆，時間到就照樣往下按準備。
+    settle = float(f7.get("fill_settle", 5.0))
+    end = time.time() + settle
     filled = f7_filled_slots(cfg)
-    if filled < 8:
-        print(f"F7：只放上 {filled}/8，沒放滿——不按準備，取消這筆（請檢查背包球夠不夠、偵測準不準）。")
-        return f"未放滿({filled}/8)"
+    while filled < 8 and time.time() < end and f7_active.is_set() and not exit_event.is_set():
+        time.sleep(0.5)
+        filled = f7_filled_slots(cfg)
+    print(f"F7：交易格目前 {filled}/8（等了最多 {settle:.0f}s），不論如何往下走。")
     # 步驟間取球
     f6_grab_once(cfg)
     # 3.5) 真的有交易視窗才按準備（用準備鈕圖案判斷，避免對著沒視窗的空畫面亂按）
@@ -896,7 +899,7 @@ def f7_do_one_trade(cfg):
         print("F7：沒偵測到交易視窗（準備鈕不在畫面上），不按準備，取消這筆。")
         return "無交易視窗"
     # 4) 按準備交易（確認有點到：按鈕上亮橘燈）
-    print("F7：8 格都有球 → 按準備交易")
+    print(f"F7：按準備交易（放上 {filled}/8）")
     if not f7_press_until_orange(
         cfg, f7["prepare_btn"], f7.get("after_prepare", 0.5), retries, "準備交易"
     ):
@@ -1042,7 +1045,8 @@ def setup_f7(cfg):
                  "accept_gone_wait": 3.0, "accept_gone_reads": 3,
                  "btn_orange_ratio": 0.15, "btn_orange_w": 44, "btn_orange_h": 44,
                  "orange_wait": 2.5, "orange_hmin": 8, "orange_hmax": 25,
-                 "prepare_score": 0.70, "prepare_search_w": 160, "prepare_search_h": 120}.items():
+                 "prepare_score": 0.70, "prepare_search_w": 160, "prepare_search_h": 120,
+                 "fill_settle": 5.0}.items():
         f7.setdefault(k, v)
     cfg["f7"] = f7
     save_config(cfg)
