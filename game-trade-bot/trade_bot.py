@@ -3,10 +3,11 @@
 遊戲交易自動精靈 —— 主程式
 
 流程（對應你的需求）：
-  1. 拍照找出右邊「道具」背包有球的格子。
-  2. 第一輪：照順序把前 N 格各放一顆球，並記住每格用了哪顆（不逐格重拍，所以快）。
-  3. 第二輪起：重拍畫面找漏擺的格子 → 先用「第一輪指派給那格的原球」補
-     （沒放到、還在背包，不會拿到已在架上的球）；那顆也補不上才拿第一輪以外的新球。
+  1. 拍照找出背包有球的格子，同時看交易格現況：
+       - 全空 → 走第一輪：照順序把前 N 格各放一顆，記住每格用哪顆（不逐格重拍，快）。
+       - 已經有任何一顆球（上次放過、部分成功）→ 跳過第一輪，直接進補空。
+  2. 補空：重拍找漏擺的格子 → 先用「第一輪指派給那格的原球」補（沒放到、還在背包，
+     不會拿到已在架上的球）；那顆也補不上才拿第一輪以外的新球。
      N = F1=7、F2=8（可在程式頂端 F1_COUNT/F2_COUNT 調整）。
 
 熱鍵（系統級，焦點在遊戲上也有效）：
@@ -298,20 +299,25 @@ def run_sequence(cfg, dry_run=False, debug=False, count=None, det=None):
 
         # 目標就是前 max_items 個交易格
         targets = trade_cells[:max_items]
-        print(f"要放 {len(targets)} 個。")
 
-        # 第一輪：照順序前 N 格各放一顆，記住每格用了哪顆球（中途不重拍，所以快）
-        for target in targets:
-            if stop_event.is_set():
-                break
-            item = pick_unused(img)
-            if item is None:
-                print("背包沒有可用的球了，停止。")
-                break
-            used.add(tuple(item))
-            assigned[tuple(target)] = item
-            if place_ball(item, target):
-                break
+        # 拍照時就先看交易格現況：
+        #   全空 → 走第一輪快速放；已經有任何一顆球（上次放過、部分成功）→ 跳過第一輪、直接補空
+        already = [t for t in targets if is_filled(img, t)]
+        if already:
+            print(f"交易格已有 {len(already)} 顆，跳過第一輪，直接補空的 {len(targets) - len(already)} 格。")
+        else:
+            print(f"交易格全空，第一輪快速放 {len(targets)} 個。")
+            for target in targets:
+                if stop_event.is_set():
+                    break
+                item = pick_unused(img)
+                if item is None:
+                    print("背包沒有可用的球了，停止。")
+                    break
+                used.add(tuple(item))
+                assigned[tuple(target)] = item
+                if place_ball(item, target):
+                    break
 
         # 第二輪起：重拍找漏擺的格子補放。
         #   先用「第一輪指派給那格的原球」補（那顆沒放到、還在背包，不會拿到已在架上的球）；
