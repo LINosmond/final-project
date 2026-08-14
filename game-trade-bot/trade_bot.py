@@ -870,9 +870,8 @@ def f7_do_one_trade(cfg):
     f7 = cfg["f7"]
     retries = int(f7.get("click_retries", 3))
 
-    # 0) 先取一次球
-    f6_grab_once(cfg)
-    # 1) 按接受，並確認交易視窗真的開了；沒開就回去重按一次交易請求（接受）
+    # 1) 偵測到請求就『立刻』按接受（不先取球，避免拖慢接受）；並確認交易視窗真的開了，
+    #    沒開就回去重按一次交易請求（接受）
     open_retries = int(f7.get("open_retries", 2))
     opened = False
     for oa in range(open_retries + 1):
