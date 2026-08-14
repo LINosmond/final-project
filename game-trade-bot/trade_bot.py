@@ -708,21 +708,26 @@ def f7_trade_window_open(cfg):
     return score >= cfg.get("f7", {}).get("prepare_score", 0.70)
 
 
-def f7_orange_lit(sct, cfg):
-    """偵測橘燈是否亮（對方準備好了）。用橘色比例判斷。"""
+def f7_orange_ratio(sct, cfg):
+    """回傳『對方橘燈』位置目前的橘色比例（0~1）。沒設定位置回傳 0。"""
     f7 = cfg.get("f7", {})
     pos = f7.get("orange_pos")
     if not pos:
-        return False
-    box = _region_box(pos, f7.get("orange_w", 26), f7.get("orange_h", 26), grab_screen(sct).shape)
-    crop = _crop_box(grab_screen(sct), box)
+        return 0.0
+    img = grab_screen(sct)
+    box = _region_box(pos, f7.get("orange_w", 26), f7.get("orange_h", 26), img.shape)
+    crop = _crop_box(img, box)
     if crop.size == 0:
-        return False
+        return 0.0
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
     lo = np.array([f7.get("orange_hmin", 8), 110, 110], dtype=np.uint8)
     hi = np.array([f7.get("orange_hmax", 25), 255, 255], dtype=np.uint8)
-    ratio = float(cv2.inRange(hsv, lo, hi).mean()) / 255.0
-    return ratio >= f7.get("orange_ratio", 0.25)
+    return float(cv2.inRange(hsv, lo, hi).mean()) / 255.0
+
+
+def f7_orange_lit(sct, cfg):
+    """偵測橘燈是否亮（對方準備好了）。用橘色比例判斷。"""
+    return f7_orange_ratio(sct, cfg) >= cfg.get("f7", {}).get("orange_ratio", 0.25)
 
 
 def f7_filled_slots(cfg):
@@ -900,17 +905,26 @@ def f7_do_one_trade(cfg):
     # 步驟間取球
     f6_grab_once(cfg)
     # 5) 等橘燈亮（對方也準備好）
-    print("F7：等對方準備（橘燈）…")
+    thr = f7.get("orange_ratio", 0.25)
+    print(f"F7：等對方準備（橘燈）…（門檻橘色比例 {thr}）")
     waited = 0.0
     timeout = f7.get("orange_timeout", 30)
+    last_print = 0.0
     with mss.mss() as sct:
         while waited < timeout and f7_active.is_set() and not exit_event.is_set():
-            if f7_orange_lit(sct, cfg):
+            r = f7_orange_ratio(sct, cfg)
+            if r >= thr:
                 break
+            # 每約 2 秒回報一次目前偵測到的橘色比例，避免看起來像發呆、也方便對門檻
+            if waited - last_print >= 2.0:
+                print(f"F7：等橘燈中…目前橘色比例 {r:.2f} / 需要 ≥ {thr}（已等 {waited:.0f}s）")
+                last_print = waited
             time.sleep(0.3)
             waited += 0.3
-        if not f7_orange_lit(sct, cfg):
-            print(f"F7：等橘燈逾時（{timeout}s），這筆未完成。")
+        if f7_orange_ratio(sct, cfg) < thr:
+            print(f"F7：等橘燈逾時（{timeout}s），對方橘燈一直沒偵測到。"
+                  f"若對方其實已準備好，多半是橘燈位置沒對準或門檻太高——"
+                  f"跑 python trade_bot.py --test-f7 看『對方橘燈』數值來調整。")
             return "橘燈逾時"
     # 6) 按確認完成（確認有點到：按鈕上亮橘燈，或交易視窗關閉）
     print("F7：橘燈亮 → 按確認，完成交易 ✅")
@@ -1123,10 +1137,14 @@ def test_f7(cfg):
     print("    球在架上偵測不到 → 把 accept_score 調低一點（例如 0.65）")
     print("=" * 56)
     oratio = f7.get("btn_orange_ratio", 0.15)
+    othr = f7.get("orange_ratio", 0.25)
     prep = f7.get("prepare_btn")
     conf = f7.get("confirm_btn")
-    print("  另外也顯示『準備／確認鈕上的橘燈比例』：按下按鈕會亮橘燈，比例越高越亮。")
-    print(f"  目前橘燈門檻 btn_orange_ratio = {oratio}（按下時的比例要 ≥ 這個值才算按到）")
+    print("  另外也顯示『準備／確認鈕橘燈』和『對方橘燈』的比例。")
+    print(f"  按鈕橘燈門檻 btn_orange_ratio = {oratio}；對方橘燈門檻 orange_ratio = {othr}")
+    print("  ★卡在等橘燈時：讓對方準備好，看『對方橘燈』數值——")
+    print("    對方好了但數值一直很低 → 表示 orange_pos 位置沒對準（重跑 --setup-f7 對準橘燈），")
+    print("    或把 config.json 的 orange_ratio 調到比亮起來的數值小一點。")
     print("=" * 56)
     try:
         with mss.mss() as sct:
@@ -1135,10 +1153,12 @@ def test_f7(cfg):
                 hit = "✅有" if score >= thresh else "  無"
                 po = f7_orange_at(sct, cfg, prep) if prep else 0.0
                 co = f7_orange_at(sct, cfg, conf) if conf else 0.0
+                opp = f7_orange_ratio(sct, cfg)
                 pm = "亮" if po >= oratio else " "
                 cm = "亮" if co >= oratio else " "
-                print(f"  接受分數 {score:.3f} {hit} | 準備橘燈 {po:.2f}{pm} | 確認橘燈 {co:.2f}{cm}   ",
-                      end="\r")
+                om = "亮" if opp >= othr else " "
+                print(f"  接受 {score:.2f}{hit} | 準備橘燈 {po:.2f}{pm} | "
+                      f"確認橘燈 {co:.2f}{cm} | 對方橘燈 {opp:.2f}{om}   ", end="\r")
                 time.sleep(0.3)
     except KeyboardInterrupt:
         print("\n結束測試。")
