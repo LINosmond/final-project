@@ -1,5 +1,6 @@
 # 使用者自己校正產生的，不進版控
 config.json
 debug_view.png
+f7_accept_ref.png
 __pycache__/
 *.pyc
