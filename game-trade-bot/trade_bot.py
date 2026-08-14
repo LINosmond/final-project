@@ -17,6 +17,7 @@
   F5 = 連續左鍵點兩個位置 開／關（第一次按會請你設定，之後記住）；Shift+F5 重新設定
   F6 = 在固定位置連點右鍵 開／關（第一次按會請你設定位置）；Shift+F6 重新設定
   F7 = 自動交易 開／關（偵測有人要求交易→接受→放滿8格→準備→橘燈亮→確認）
+       空檔時會自動到 F6 的位置右鍵取置物櫃的球補貨（需先按 F6 設定好位置）
        第一次要先設定：python trade_bot.py --setup-f7
 
 偵測方式：用顏色判斷。綠色球是偏黃綠／橄欖綠，空格是深藍色，
@@ -697,8 +698,25 @@ def f7_do_one_trade(cfg):
     return "完成"
 
 
+def f7_restock(cfg):
+    """空檔時到 F6 的位置右鍵取置物櫃的球，把背包補一補。"""
+    f7 = cfg.get("f7", {})
+    pos = f6_pos(cfg)
+    if not pos or not f7.get("restock", True):
+        return
+    clicks = int(f7.get("restock_clicks", 3))
+    for _ in range(clicks):
+        if not f7_active.is_set() or exit_event.is_set() or busy_lock.locked():
+            break
+        pyautogui.moveTo(pos[0], pos[1], duration=cfg["timing"].get("move_duration", 0.05))
+        time.sleep(0.02)
+        press_click("right", cfg["timing"].get("click_hold", 0.03))
+        time.sleep(f7.get("restock_gap", 0.15))
+
+
 def f7_watch(cfg):
-    print("F7：自動交易待命中，等有人要求交易…（再按 F7 停止）")
+    print("F7：自動交易待命中，等有人要求交易…（空檔會自動去 F6 位置取置物櫃的球補貨；再按 F7 停止）")
+    last_restock = 0.0
     with mss.mss() as sct:
         while f7_active.is_set() and not exit_event.is_set():
             try:
@@ -715,6 +733,12 @@ def f7_watch(cfg):
                         stop_event.clear()
                         busy_lock.release()
                     time.sleep(cfg.get("f7", {}).get("cooldown", 2.0))
+                else:
+                    # 空檔：每隔一段時間到 F6 位置補貨（取置物櫃的球）
+                    interval = cfg.get("f7", {}).get("restock_interval", 5.0)
+                    if time.time() - last_restock >= interval:
+                        f7_restock(cfg)
+                        last_restock = time.time()
             except pyautogui.FailSafeException:
                 print("F7：滑鼠到左上角，暫停一下。")
                 time.sleep(1.0)
@@ -771,11 +795,14 @@ def setup_f7(cfg):
                "prepare_btn": prepare, "confirm_btn": confirm, "orange_pos": orange})
     for k, v in {"accept_match": 15, "orange_ratio": 0.25, "orange_timeout": 30,
                  "after_accept": 1.0, "after_prepare": 0.5, "after_confirm": 1.0,
-                 "cooldown": 2.0, "poll": 0.4, "orange_w": 26, "orange_h": 26}.items():
+                 "cooldown": 2.0, "poll": 0.4, "orange_w": 26, "orange_h": 26,
+                 "restock": True, "restock_interval": 5.0, "restock_clicks": 3,
+                 "restock_gap": 0.15}.items():
         f7.setdefault(k, v)
     cfg["f7"] = f7
     save_config(cfg)
     print("\nF7 設定完成並存檔！回主程式（python trade_bot.py）按 F7 開始自動交易待命。")
+    print("提醒：空檔補貨會用到 F6 的位置——請先按一次 F6 設定好『置物櫃的球』位置。")
     print("提醒：F7 會真的把球送出去，請先小額測試確認流程正確。")
 
 
