@@ -176,7 +176,7 @@ def build_config(inventory, trade, max_items, offset, old=None):
     # 相容舊鍵名 f4
     two_click = (old or {}).get("two_click") or (old or {}).get("f4") or {"pos_a": None, "pos_b": None}
     two_click.pop("_說明", None)
-    return {
+    cfg = {
         "inventory": inventory,
         "trade": trade,
         "max_items": max_items,
@@ -193,6 +193,11 @@ def build_config(inventory, trade, max_items, offset, old=None):
         "timing": timing,
         "quantity": quantity,
     }
+    # 保留其他既有設定，重新校正不要洗掉（F6 位置、F7 自動交易、place_retries…）
+    for k in ("f6_pos", "f7", "place_retries"):
+        if old and old.get(k) is not None:
+            cfg[k] = old[k]
+    return cfg
 
 
 def load_old():
@@ -241,15 +246,25 @@ def main():
         json.dump(config, f, ensure_ascii=False, indent=2)
 
     print("=" * 60)
-    print(f"已存好設定：{CONFIG_PATH}")
+    print(f"已存好背包／交易格設定：{CONFIG_PATH}")
     print("=" * 60)
+
+    # 順便問要不要設定 F7 自動交易（需要當下有一筆真實交易）
+    ans = input("\n要不要現在順便設定 F7 自動交易？需要當下有一筆真實交易（建議找朋友）。[y/N]：").strip().lower()
+    if ans.startswith("y"):
+        try:
+            import trade_bot
+            cfg2 = trade_bot.load_config()
+            trade_bot.setup_f7(cfg2)
+        except Exception as e:
+            print(f"F7 設定過程出錯：{e}\n可改天單獨執行：python trade_bot.py --setup-f7")
+    else:
+        print("（略過 F7。之後要設定：python trade_bot.py --setup-f7）")
+
     print(
-        "\n建議先『空跑』確認有沒有抓對（不會真的點）：\n"
-        "  python trade_bot.py --dry-run\n\n"
-        "看偵測圖：\n"
-        "  python trade_bot.py --debug\n\n"
-        "正式執行（按 F1 開始 / F2 停止）：\n"
-        "  python trade_bot.py\n"
+        "\n建議先『空跑』確認有沒有抓對（不會真的點）：python trade_bot.py --dry-run\n"
+        "看偵測圖：python trade_bot.py --debug\n"
+        "正式執行：python trade_bot.py\n"
     )
 
 
