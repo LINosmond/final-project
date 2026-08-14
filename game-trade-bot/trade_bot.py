@@ -607,11 +607,12 @@ def _abs_diff(a, b):
 
 
 def f7_trade_request_present(sct, cfg):
-    """用樣本圖判斷『交易要求視窗』有沒有跳出來。"""
+    """用『接受鈕』小樣板在附近搜尋，判斷交易要求視窗有沒有跳出來。
+    只認按鈕圖案、不吃背景，所以背景變了、彈窗位置小偏移也認得。"""
     global _f7_accept_ref
     f7 = cfg.get("f7", {})
-    box = f7.get("accept_box")
-    if not box:
+    btn = f7.get("accept_btn")
+    if not btn:
         return False
     if _f7_accept_ref is None:
         if not os.path.exists(F7_ACCEPT_REF):
@@ -619,8 +620,15 @@ def f7_trade_request_present(sct, cfg):
         _f7_accept_ref = cv2.imread(F7_ACCEPT_REF)
     if _f7_accept_ref is None:
         return False
-    cur = _crop_box(grab_screen(sct), box)
-    return _abs_diff(cur, _f7_accept_ref) <= f7.get("accept_match", 15)
+    img = grab_screen(sct)
+    sbox = _region_box(btn, f7.get("search_w", 260), f7.get("search_h", 180), img.shape)
+    region = _crop_box(img, sbox)
+    th, tw = _f7_accept_ref.shape[:2]
+    if region.shape[0] < th or region.shape[1] < tw:
+        return False
+    res = cv2.matchTemplate(region, _f7_accept_ref, cv2.TM_CCOEFF_NORMED)
+    _, maxv, _, _ = cv2.minMaxLoc(res)
+    return maxv >= f7.get("accept_score", 0.80)
 
 
 def f7_orange_lit(sct, cfg):
@@ -756,9 +764,10 @@ def setup_f7(cfg):
     accept = _capture_pos("把滑鼠移到小視窗的『接受』鈕上，按 Enter：")
     with mss.mss() as sct:
         img = grab_screen(sct)
-    box = _region_box(accept, f7.get("accept_w", 170), f7.get("accept_h", 90), img.shape)
+    # 只拍『接受鈕』小圖案當樣板（不吃背景，之後背景變了也認得）
+    box = _region_box(accept, f7.get("accept_w", 54), f7.get("accept_h", 44), img.shape)
     cv2.imwrite(F7_ACCEPT_REF, _crop_box(img, box))
-    print("  已拍下『要求交易視窗』樣本。\n")
+    print("  已拍下『接受鈕』樣板。\n")
 
     print("步驟 2：按接受把交易視窗打開（可手動），把畫面弄到看得到『準備交易』和『確認』兩顆鈕。")
     prepare = _capture_pos("把滑鼠移到『準備交易』鈕上，按 Enter：")
@@ -769,7 +778,8 @@ def setup_f7(cfg):
 
     f7.update({"accept_btn": accept, "accept_box": box,
                "prepare_btn": prepare, "confirm_btn": confirm, "orange_pos": orange})
-    for k, v in {"accept_match": 15, "orange_ratio": 0.25, "orange_timeout": 30,
+    for k, v in {"accept_score": 0.80, "search_w": 260, "search_h": 180,
+                 "orange_ratio": 0.25, "orange_timeout": 30,
                  "after_accept": 1.0, "after_prepare": 0.5, "after_confirm": 1.0,
                  "cooldown": 2.0, "poll": 0.4, "orange_w": 26, "orange_h": 26}.items():
         f7.setdefault(k, v)
