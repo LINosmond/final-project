@@ -706,16 +706,28 @@ def f7_do_one_trade(cfg):
     return "完成"
 
 
-def f7_restock(cfg):
-    """空檔時到 F6 的位置右鍵取置物櫃的球，把背包補一補。"""
+def f7_other_busy():
+    """是否有其他動作正在跑（搬運/連點右鍵/連續兩點/F6）——有的話補貨要讓路。"""
+    return (busy_lock.locked() or rightclick_active.is_set()
+            or two_click_active.is_set() or f6_active.is_set())
+
+
+def f7_restock(cfg, sct):
+    """空檔時到 F6 的位置右鍵取置物櫃的球補貨。
+    交易提示一跳出來、或有其他動作、或被要求停止，就立刻停手。"""
     f7 = cfg.get("f7", {})
     pos = f6_pos(cfg)
     if not pos or not _f7_restock or not f7.get("restock", True):
         return
     clicks = int(f7.get("restock_clicks", 3))
     for _ in range(clicks):
-        if not f7_active.is_set() or exit_event.is_set() or busy_lock.locked():
-            break
+        if not f7_active.is_set() or exit_event.is_set():
+            return
+        if f7_other_busy():                        # 有其他動作 → 停止取球
+            return
+        if f7_trade_request_present(sct, cfg):     # 交易提示跳出 → 立刻停止取球
+            print("F7：偵測到交易要求，停止取球。")
+            return
         pyautogui.moveTo(pos[0], pos[1], duration=cfg["timing"].get("move_duration", 0.05))
         time.sleep(0.02)
         press_click("right", cfg["timing"].get("click_hold", 0.03))
@@ -725,7 +737,7 @@ def f7_restock(cfg):
 def f7_watch(cfg):
     mode = "會自動去 F6 取置物櫃球補貨" if _f7_restock else "不補貨"
     print(f"自動交易待命中（{mode}），等有人要求交易…（再按 F7/F8 停止）")
-    last_restock = 0.0
+    last_restock = time.time()   # 先等一個間隔再去取
     with mss.mss() as sct:
         while f7_active.is_set() and not exit_event.is_set():
             try:
@@ -743,10 +755,10 @@ def f7_watch(cfg):
                         busy_lock.release()
                     time.sleep(cfg.get("f7", {}).get("cooldown", 2.0))
                 else:
-                    # 空檔：每隔一段時間到 F6 位置補貨（取置物櫃的球）
+                    # 空檔：隔一段時間、且沒有其他動作時，才到 F6 位置補貨（取置物櫃的球）
                     interval = cfg.get("f7", {}).get("restock_interval", 5.0)
-                    if time.time() - last_restock >= interval:
-                        f7_restock(cfg)
+                    if time.time() - last_restock >= interval and not f7_other_busy():
+                        f7_restock(cfg, sct)
                         last_restock = time.time()
             except pyautogui.FailSafeException:
                 print("F7：滑鼠到左上角，暫停一下。")
