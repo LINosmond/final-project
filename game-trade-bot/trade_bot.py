@@ -872,11 +872,25 @@ def f7_do_one_trade(cfg):
 
     # 0) 先取一次球
     f6_grab_once(cfg)
-    # 1) 按接受（確認有點到，沒到就再按）
-    print("F7：偵測到交易要求 → 按接受")
-    if not f7_accept_verified(cfg):
-        print("F7：接受一直沒點到（或被中止），取消這筆。")
-        return "接受失敗"
+    # 1) 按接受，並確認交易視窗真的開了；沒開就回去重按一次交易請求（接受）
+    open_retries = int(f7.get("open_retries", 2))
+    opened = False
+    for oa in range(open_retries + 1):
+        print("F7：偵測到交易要求 → 按接受" + (f"（第 {oa} 次重試）" if oa else ""))
+        if not f7_accept_verified(cfg):
+            print("F7：接受一直沒點到（或被中止），取消這筆。")
+            return "接受失敗"
+        # 確認交易視窗有沒有開（用準備鈕圖案判斷）。True=開、False=沒開、None=沒樣板不判斷
+        win = f7_trade_window_open(cfg)
+        if win is not False:
+            opened = True
+            break
+        print("F7：接受後沒偵測到交易視窗開啟，回去重按一次交易請求…")
+        if sleep_interruptible(f7.get("reopen_wait", 1.2)):
+            return "中止"
+    if not opened:
+        print("F7：多次都沒開起交易視窗，取消這筆。")
+        return "沒開交易視窗"
     # 步驟間取球
     f6_grab_once(cfg)
     # 2) 放滿 8 格綠球（沿用主搬運邏輯）
@@ -937,8 +951,11 @@ def f7_do_one_trade(cfg):
     ):
         print("F7：確認交易可能沒按到，請留意這筆是否完成。")
         return "確認未確定"
-    # 每輪最後再取一次球，為下一筆先備好
-    f6_grab_once(cfg)
+    # 每輪最後再取球（預設 3 次），為下一筆先備好
+    for _ in range(int(f7.get("end_grabs", 3))):
+        if exit_event.is_set():
+            break
+        f6_grab_once(cfg)
     return "完成"
 
 
@@ -1046,7 +1063,7 @@ def setup_f7(cfg):
                  "btn_orange_ratio": 0.15, "btn_orange_w": 44, "btn_orange_h": 44,
                  "orange_wait": 2.5, "orange_hmin": 8, "orange_hmax": 25,
                  "prepare_score": 0.70, "prepare_search_w": 160, "prepare_search_h": 120,
-                 "fill_settle": 5.0}.items():
+                 "fill_settle": 5.0, "end_grabs": 3, "open_retries": 2, "reopen_wait": 1.2}.items():
         f7.setdefault(k, v)
     cfg["f7"] = f7
     save_config(cfg)
