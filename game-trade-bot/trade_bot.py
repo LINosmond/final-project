@@ -1026,8 +1026,11 @@ def f8_ready(cfg):
 
 
 def f8_preclick(cfg):
-    """前置點：在固定的『右鍵位置』按右鍵 → 延遲 → 在固定的『左鍵位置』按左鍵。
-    兩個位置沒設定就跳過（不影響後面流程）。"""
+    """前置點：按右鍵 → 延遲 → 按左鍵。
+    預設『右鍵用目前滑鼠位置』（角色會移動，先把滑鼠移到角色上就好），
+    左鍵用『固定偏移』(右鍵後選單通常在游標附近固定位置) = 目前位置 + (左鍵設定 − 右鍵設定)。
+    把 config 的 preclick_use_cursor 設 false 則改用當初記的固定座標。
+    兩個位置都沒設定就跳過（不影響後面流程）。"""
     f7 = cfg["f7"]
     rp = f7.get("preclick_rpos")
     lp = f7.get("preclick_lpos")
@@ -1036,14 +1039,54 @@ def f8_preclick(cfg):
     d = cfg["timing"].get("move_duration", 0.15)
     hold = cfg["timing"].get("click_hold", 0.03)
     delay = float(f7.get("preclick_delay", 0.3))
-    pyautogui.moveTo(rp[0], rp[1], duration=d)
-    time.sleep(0.02)
-    press_click("right", hold)
-    time.sleep(delay)
-    pyautogui.moveTo(lp[0], lp[1], duration=d)
-    time.sleep(0.02)
-    press_click("left", hold)
-    print(f"F8：前置點 右鍵{rp} → 等{delay}s → 左鍵{lp}")
+    if f7.get("preclick_use_cursor", True):
+        # 右鍵：目前滑鼠位置（不移動）；左鍵：目前位置 + 固定偏移
+        x, y = pyautogui.position()
+        press_click("right", hold)
+        time.sleep(delay)
+        lx, ly = x + (lp[0] - rp[0]), y + (lp[1] - rp[1])
+        pyautogui.moveTo(lx, ly, duration=d)
+        time.sleep(0.02)
+        press_click("left", hold)
+        print(f"F8：前置點 右鍵(目前位置 {x},{y}) → 等{delay}s → 左鍵({lx},{ly})")
+    else:
+        # 固定座標模式
+        pyautogui.moveTo(rp[0], rp[1], duration=d)
+        time.sleep(0.02)
+        press_click("right", hold)
+        time.sleep(delay)
+        pyautogui.moveTo(lp[0], lp[1], duration=d)
+        time.sleep(0.02)
+        press_click("left", hold)
+        print(f"F8：前置點 右鍵{rp} → 等{delay}s → 左鍵{lp}")
+
+
+def record_preclick_points(cfg):
+    """快速重設 F8 前置點的兩個位置（Shift+F8）。"""
+    if keyboard is None:
+        print("F8 前置點設定需要 keyboard 套件。")
+        return
+    f7 = cfg.setdefault("f7", {})
+    print("\n== 重設 F8 前置點的兩個位置 ==")
+    print("① 前置『右鍵』要點的位置（角色/目標上），移好滑鼠按 Enter…")
+    if not wait_enter_press():
+        return
+    rp = list(pyautogui.position())
+    print(f"  右鍵 = {rp}")
+    time.sleep(0.25)
+    print("② 前置『左鍵』要點的位置（右鍵後選單要點的地方），移好滑鼠按 Enter…")
+    if not wait_enter_press():
+        return
+    lp = list(pyautogui.position())
+    print(f"  左鍵 = {lp}")
+    f7["preclick_rpos"] = rp
+    f7["preclick_lpos"] = lp
+    save_config(cfg)
+    print("F8 前置點已更新（右鍵預設仍以『目前滑鼠位置』為準，這裡記的是左鍵相對右鍵的偏移）。\n")
+
+
+def on_reset_f8_preclick(cfg):
+    threading.Thread(target=record_preclick_points, args=(cfg,), daemon=True).start()
 
 
 def f8_do_one(cfg):
@@ -1199,7 +1242,8 @@ def setup_trade_points(cfg, include_accept=True):
                  "orange_ratio": 0.25, "orange_timeout": 10,
                  "after_accept": 1.0, "after_prepare": 0.5, "after_confirm": 1.0,
                  "cooldown": 2.0, "poll": 0.4, "orange_w": 26, "orange_h": 26,
-                 "click_retries": 3, "after_grab": 0.6, "preclick_delay": 0.3,
+                 "click_retries": 3, "after_grab": 0.6,
+                 "preclick_delay": 0.3, "preclick_use_cursor": True,
                  "accept_gone_wait": 3.0, "accept_gone_reads": 3,
                  "btn_orange_ratio": 0.15, "btn_orange_w": 44, "btn_orange_h": 44,
                  "orange_wait": 2.5, "orange_hmin": 8, "orange_hmax": 25,
@@ -1229,6 +1273,7 @@ def hotkey_loop(cfg, dry_run, debug):
     keyboard.add_hotkey("shift+f6", lambda: on_reset_f6(cfg))
     keyboard.add_hotkey("f7", lambda: on_f7(cfg))
     keyboard.add_hotkey("f8", lambda: on_f8(cfg))
+    keyboard.add_hotkey("shift+f8", lambda: on_reset_f8_preclick(cfg))
     two_set = bool(two_click_cfg(cfg).get("pos_a"))
     f6_set = bool(f6_pos(cfg))
     print("=" * 52)
@@ -1244,8 +1289,9 @@ def hotkey_loop(cfg, dry_run, debug):
     print("    Shift+F6 = 重新設定 F6 的位置")
     print("    F7 = 自動交易 開／關（偵測有人要求交易→接受→放滿8格→準備→橘燈亮→確認）"
           + ("" if f7_ready(cfg) else "（尚未設定：python trade_bot.py --setup-f7）"))
-    print("    F8 = 提起交易端 開／關（前置點右鍵→左鍵 → 按準備 → 等對方橘燈 → 按確認）"
+    print("    F8 = 提起交易端 開／關（前置點：右鍵『目前滑鼠位置』→左鍵固定偏移 → 準備 → 等對方橘燈 → 確認）"
           + ("" if f8_ready(cfg) else "（尚未設定：跑 校正.bat 一併設定交易點位）"))
+    print("    Shift+F8 = 重設 F8 前置點的兩個位置")
     print("    （滑鼠甩到螢幕左上角 = 緊急停止；要結束程式關掉視窗或 Ctrl+C）")
     print("=" * 52)
     try:
