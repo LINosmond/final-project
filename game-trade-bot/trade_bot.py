@@ -897,6 +897,30 @@ def f7_press_until_orange(cfg, center, wait_s, retries, label, also_closed=False
         return f7_orange_at(sct, cfg, center) >= ratio
 
 
+def f7_confirm_until_opp_gone(cfg):
+    """按『確認（完成交易）』鈕，要看到『對方準備燈消失』(交易結束→視窗不見)才算真的按到；
+    沒消失就再按一次（最多 click_retries 次）。回傳 True=已完成。"""
+    f7 = cfg["f7"]
+    thr = f7.get("orange_ratio", 0.25)
+    retries = int(f7.get("click_retries", 3))
+    wait_s = max(float(f7.get("after_confirm", 1.0)), float(f7.get("confirm_wait", 2.5)))
+    with mss.mss() as sct:
+        for attempt in range(retries + 1):
+            if f7_orange_ratio(sct, cfg) < thr:
+                return True  # 對方燈已不見 = 交易已結束
+            if attempt > 0:
+                print(f"F7：確認後對方燈還在，再按一次（第 {attempt} 次）…")
+            click(f7["confirm_btn"][0], f7["confirm_btn"][1], cfg)
+            end = time.time() + wait_s
+            while time.time() < end:
+                if stop_event.is_set() or exit_event.is_set():
+                    return False
+                if f7_orange_ratio(sct, cfg) < thr:
+                    return True  # 對方燈消失 = 完成
+                time.sleep(0.2)
+        return f7_orange_ratio(sct, cfg) < thr
+
+
 def f7_do_one_trade(cfg):
     """完成一筆交易的流程；每個步驟之間會到 F6 位置取一次球。回傳文字結果。"""
     f7 = cfg["f7"]
@@ -950,12 +974,14 @@ def f7_do_one_trade(cfg):
     if win is False:
         print("F7：沒偵測到交易視窗（準備鈕不在畫面上），不按準備，取消這筆。")
         return "無交易視窗"
-    # 4) 按準備交易——只按『一次』。不靠準備鈕變橘來重按：這遊戲的「準備好」是左下角
-    #    橘色橫條在亮，不是準備鈕本身，硬要靠鈕變橘判斷會一直重按、偶數次剛好把準備取消掉。
+    # 4) 按準備交易——按到準備鈕亮橘燈為止（重按不會取消，放心重按）；
+    #    真的都偵測不到也照樣往下走（多半其實已按下，只是橘燈沒抓到）。
     print(f"F7：按準備交易（放上 {filled}/8）")
-    click(f7["prepare_btn"][0], f7["prepare_btn"][1], cfg)
-    if sleep_interruptible(f7.get("after_prepare", 0.5)):
-        return "中止"
+    if not f7_press_until_orange(
+        cfg, f7["prepare_btn"], f7.get("after_prepare", 0.5), retries, "準備交易"
+    ):
+        print("F7：準備鈕橘燈沒偵測到，仍照樣往下等對方。"
+              "（若常這樣：跑 python trade_bot.py --test-f7 看『準備橘燈』數值調 btn_orange_ratio）")
     # 步驟間取球
     f6_grab_once(cfg)
     # 5) 等橘燈亮（對方也準備好）
@@ -989,13 +1015,10 @@ def f7_do_one_trade(cfg):
                   f"若對方其實已準備好，多半是橘燈位置沒對準或門檻太高——"
                   f"跑 python trade_bot.py --test-f7 看『對方橘燈』數值來調整。")
             return "橘燈逾時"
-    # 6) 按確認完成（確認有點到：按鈕上亮橘燈，或交易視窗關閉）
+    # 6) 按確認完成——要看到『對方準備燈消失』(交易結束、視窗不見) 才算按到，否則再按一次
     print("F7：橘燈亮 → 按確認，完成交易 ✅")
-    if not f7_press_until_orange(
-        cfg, f7["confirm_btn"], f7.get("after_confirm", 1.0), retries,
-        "確認交易", also_closed=True
-    ):
-        print("F7：確認交易可能沒按到，請留意這筆是否完成。")
+    if not f7_confirm_until_opp_gone(cfg):
+        print("F7：按了確認但對方燈一直沒消失，可能沒按到，請留意這筆是否完成。")
         return "確認未確定"
     # 每輪最後再取球（預設 3 次），為下一筆先備好
     for _ in range(int(f7.get("end_grabs", 3))):
@@ -1147,11 +1170,13 @@ def f8_do_one(cfg):
             time.sleep(0.2)
         if not opened:
             return "沒開視窗"
-    # 1) 到這裡代表有交易視窗 → 按準備交易（只按一次，不靠準備鈕變橘重按，避免越按越取消）
+    # 1) 到這裡代表有交易視窗 → 按準備交易（按到準備鈕亮橘燈為止，重按不會取消）；
+    #    真的偵測不到也照樣往下等對方橘燈。
     print("F8：交易視窗開 → 按準備交易")
-    click(f7["prepare_btn"][0], f7["prepare_btn"][1], cfg)
-    if sleep_interruptible(f7.get("after_prepare", 0.5)):
-        return "中止"
+    if not f7_press_until_orange(
+        cfg, f7["prepare_btn"], f7.get("after_prepare", 0.5), retries, "準備交易"
+    ):
+        print("F8：準備鈕橘燈沒偵測到，仍照樣往下等對方。")
     # 2) 等對方橘燈亮
     thr = f7.get("orange_ratio", 0.25)
     timeout = f7.get("orange_timeout", 10)
@@ -1174,13 +1199,10 @@ def f8_do_one(cfg):
         if f7_orange_ratio(sct, cfg) < thr:
             print(f"F8：等對方橘燈逾時（{timeout:.0f}s），跳過這筆。")
             return "橘燈逾時"
-    # 3) 按確認完成
+    # 3) 按確認完成——要看到『對方準備燈消失』(交易結束、視窗不見) 才算按到，否則再按一次
     print("F8：對方橘燈亮 → 按確認，完成交易 ✅")
-    if not f7_press_until_orange(
-        cfg, f7["confirm_btn"], f7.get("after_confirm", 1.0), retries,
-        "確認交易", also_closed=True
-    ):
-        print("F8：確認交易可能沒按到，請留意這筆是否完成。")
+    if not f7_confirm_until_opp_gone(cfg):
+        print("F8：按了確認但對方燈一直沒消失，可能沒按到，請留意這筆是否完成。")
         return "確認未確定"
     return "完成"
 
@@ -1313,7 +1335,7 @@ def _ensure_f7_defaults(f7):
                  "preclick_delay": 0.3, "preclick_use_cursor": False, "f8_retry_gap": 0.6,
                  "accept_gone_wait": 3.0, "accept_gone_reads": 3,
                  "btn_orange_ratio": 0.15, "btn_orange_w": 44, "btn_orange_h": 44,
-                 "orange_wait": 2.5, "orange_hmin": 8, "orange_hmax": 25,
+                 "orange_wait": 2.5, "confirm_wait": 2.5, "orange_hmin": 8, "orange_hmax": 25,
                  "prepare_score": 0.70, "prepare_search_w": 160, "prepare_search_h": 120,
                  "fill_settle": 5.0, "end_grabs": 3, "open_retries": 2, "reopen_wait": 1.2,
                  "window_wait": 2.5}.items():
