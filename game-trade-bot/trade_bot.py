@@ -1293,6 +1293,20 @@ def setup_trade_points(cfg, include_accept=True):
                "preclick_loff": [pre_l[0] - pre_r[0], pre_l[1] - pre_r[1]],
                "prepare_btn": prepare, "confirm_btn": confirm, "orange_pos": orange})
 
+    _save_f7(cfg, f7)
+    has_accept = bool(f7.get("accept_btn")) and os.path.exists(F7_ACCEPT_REF)
+    print("\n" + "=" * 56)
+    print("  交易點位設定完成並存檔！")
+    print("=" * 56)
+    print("  ✅ F8（自己提交易）：已可用，按 F8 開始。角色移動時按 Shift+F8 更新位置。")
+    print("  " + ("✅" if has_accept else "⭕") + " F7（收別人交易）："
+          + ("已可用，按 F7 開始。" if has_accept
+             else "還差『接受鈕』。等別人找你交易、邀請視窗出現時，"
+                  "再跑一次『校正.bat』(或 python trade_bot.py --setup-f7)，"
+                  "到最後那步按 y 設定即可。"))
+
+
+def _ensure_f7_defaults(f7):
     for k, v in {"accept_score": 0.75, "search_full": True,
                  "search_w": 600, "search_h": 400,
                  "orange_ratio": 0.25, "orange_timeout": 10,
@@ -1307,18 +1321,66 @@ def setup_trade_points(cfg, include_accept=True):
                  "fill_settle": 5.0, "end_grabs": 3, "open_retries": 2, "reopen_wait": 1.2,
                  "window_wait": 2.5}.items():
         f7.setdefault(k, v)
+    return f7
+
+
+def _save_f7(cfg, f7):
+    _ensure_f7_defaults(f7)
     cfg["f7"] = f7
     save_config(cfg)
-    has_accept = bool(f7.get("accept_btn")) and os.path.exists(F7_ACCEPT_REF)
-    print("\n" + "=" * 56)
-    print("  交易點位設定完成並存檔！")
-    print("=" * 56)
-    print("  ✅ F8（自己提交易）：已可用，按 F8 開始。角色移動時按 Shift+F8 更新位置。")
-    print("  " + ("✅" if has_accept else "⭕") + " F7（收別人交易）："
-          + ("已可用，按 F7 開始。" if has_accept
-             else "還差『接受鈕』。等別人找你交易、邀請視窗出現時，"
-                  "再跑一次『校正.bat』(或 python trade_bot.py --setup-f7)，"
-                  "到最後那步按 y 設定即可。"))
+
+
+# ---- 分區設定：每個項目可單獨重做，只更新那一項並存檔（做錯不用全部重來）----
+def setup_accept(cfg):
+    """交易請求（接受鈕）——F7 收別人交易用。需要現在畫面上有『交易邀請』視窗。"""
+    f7 = cfg.get("f7", {})
+    print("【交易請求 / 接受鈕】請先讓別人找你交易、讓『交易邀請』小視窗跳出來並保持顯示。")
+    accept = _capture_pos("『接受』鈕 的位置，按 Enter：")
+    abox = _capture_button_template(accept, f7.get("accept_w", 54), f7.get("accept_h", 44),
+                                    F7_ACCEPT_REF, "接受鈕")
+    f7.update({"accept_btn": accept, "accept_box": abox})
+    _save_f7(cfg, f7)
+    print("✅ 接受鈕設定完成並存檔。\n")
+
+
+def setup_preclick(cfg):
+    """F8 前置點（右鍵位置 + 左鍵位置，算出偏移）。"""
+    f7 = cfg.get("f7", {})
+    pre_r = _capture_pos("前置『右鍵』要點的位置（通常是角色/交易對象上），按 Enter：")
+    pre_l = _capture_pos("前置『左鍵』要點的位置（右鍵後選單「交易」選項），按 Enter：")
+    f7.update({"preclick_rpos": pre_r, "preclick_lpos": pre_l,
+               "preclick_loff": [pre_l[0] - pre_r[0], pre_l[1] - pre_r[1]]})
+    _save_f7(cfg, f7)
+    print("✅ 前置點設定完成並存檔。（角色移動時也可按 Shift+F8 更新）\n")
+
+
+def setup_prepare(cfg):
+    """準備交易鈕（位置 + 樣板，用來判斷交易視窗在不在）。需要交易視窗開著。"""
+    f7 = cfg.get("f7", {})
+    prepare = _capture_pos("『準備交易』鈕 的位置，按 Enter：")
+    _capture_button_template(prepare, f7.get("prepare_w", 90), f7.get("prepare_h", 44),
+                             F7_PREPARE_REF, "準備鈕（判斷交易視窗在不在）")
+    f7["prepare_btn"] = prepare
+    _save_f7(cfg, f7)
+    print("✅ 準備交易鈕設定完成並存檔。\n")
+
+
+def setup_confirm(cfg):
+    """確認（完成交易）鈕的位置。需要交易視窗開著。"""
+    f7 = cfg.get("f7", {})
+    confirm = _capture_pos("『確認（完成交易）』鈕 的位置，按 Enter：")
+    f7["confirm_btn"] = confirm
+    _save_f7(cfg, f7)
+    print("✅ 確認鈕設定完成並存檔。\n")
+
+
+def setup_orange(cfg):
+    """對方橘燈的位置。"""
+    f7 = cfg.get("f7", {})
+    orange = _capture_pos("『對方橘燈』的位置（對方準備好會亮的燈），按 Enter：")
+    f7["orange_pos"] = orange
+    _save_f7(cfg, f7)
+    print("✅ 對方橘燈設定完成並存檔。\n")
 
 
 def setup_f7(cfg):

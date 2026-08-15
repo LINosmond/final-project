@@ -222,68 +222,121 @@ def load_old():
     return None
 
 
-def main():
-    parser = argparse.ArgumentParser(description="校正工具")
-    parser.add_argument("--full", action="store_true", help="強制完整校正")
-    args = parser.parse_args()
-
-    print("=" * 60)
-    print("  遊戲交易自動精靈 —— 校正工具")
-    print("=" * 60)
-    if keyboard is None:
-        print("（提醒：沒裝 keyboard 套件，記點要回終端機按 Enter。想要放好滑鼠直接按 Enter，"
-              "請先 pip install keyboard）")
-    print("\n請先把遊戲切到『交易視窗 + 道具背包同時打開、都沒被擋住』的狀態。")
-
-    old = load_old()
-    can_quick = bool(old and old.get("_quick", {}).get("offset_trade_from_inv"))
-
-    if args.full or not can_quick:
-        if not can_quick and old:
-            print("（舊設定沒有間距資料，這次先做一次完整校正。）")
-        input("\n準備好後按 Enter 開始…")
-        inventory, trade, max_items, offset = do_full_calibration()
-    else:
-        print("\n偵測到上次的設定。要用哪一種？")
-        print("  [Enter] 快速校正：只指『背包左上角』+『交易視窗左上角』兩個點，其他沿用上次（最快）")
-        print("  [F]     完整校正：重新指所有角落（換了視窗位置或解析度時用）")
-        choice = input("選擇（直接 Enter = 快速）：").strip().lower()
-        if choice == "f":
-            inventory, trade, max_items, offset = do_full_calibration()
-        else:
-            inventory, trade, max_items, offset = do_quick_calibration(old)
-
+def _save_grid(inventory, trade, max_items, offset, old):
     config = build_config(inventory, trade, max_items, offset, old)
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
+    print("✅ 背包 + 交易格 已存檔。\n")
+    return config
+
+
+def run_full_grid(old):
+    inv, tr, mx, off = do_full_calibration()
+    return _save_grid(inv, tr, mx, off, old)
+
+
+def run_quick_grid(old):
+    if not (old and old.get("_quick", {}).get("offset_trade_from_inv")):
+        print("（沒有舊的間距資料，改做一次完整校正。）")
+        return run_full_grid(old)
+    inv, tr, mx, off = do_quick_calibration(old)
+    return _save_grid(inv, tr, mx, off, old)
+
+
+def _load_trade_bot():
+    """載入主程式模組（拿它的分區交易點位設定）。缺套件就回 None。"""
+    try:
+        import trade_bot
+        return trade_bot
+    except SystemExit as e:
+        print(f"（交易點位設定需要的套件缺少：{e}）")
+    except Exception as e:
+        print(f"（載入交易點位設定失敗：{e}）")
+    return None
+
+
+def main():
+    parser = argparse.ArgumentParser(description="校正工具")
+    parser.add_argument("--full", action="store_true", help="直接做一次完整背包/交易格校正")
+    args = parser.parse_args()
 
     print("=" * 60)
-    print(f"已存好設定：{CONFIG_PATH}")
+    print("  遊戲交易自動精靈 —— 校正工具（分區校正，做錯只重那一區）")
     print("=" * 60)
+    if keyboard is None:
+        print("（提醒：沒裝 keyboard 套件，記點要回終端機按 Enter。"
+              "想放好滑鼠直接按 Enter，請先 pip install keyboard）")
+    print("記點方式：把滑鼠移到定位 → 直接按 Enter 記錄。")
 
-    # 順便設定交易點位（F7 收交易 / F8 提交易）
-    ans = input(
-        "\n要不要順便設定『交易點位』(F7 自動交易 / F8 提起交易端)？\n"
-        "  需要現在把『交易視窗』打開、看得到準備/確認鈕。\n"
-        "  設定（直接 Enter=設定 / n=跳過）："
-    ).strip().lower()
-    if ans != "n":
-        try:
-            import trade_bot  # 重用主程式的交易點位設定（含拍準備鈕樣板）
-            trade_bot.setup_trade_points(config, include_accept=True)
-        except SystemExit as e:
-            print(f"（設定交易點位需要的套件缺少：{e}）")
-        except Exception as e:
-            print(f"（設定交易點位時發生問題，已跳過：{e}）")
+    tb = _load_trade_bot()
 
-    print(
-        "\n建議先『空跑』確認有沒有抓對（不會真的點）：\n"
-        "  python trade_bot.py --dry-run\n\n"
-        "看偵測圖：\n"
-        "  python trade_bot.py --debug\n\n"
-        "正式執行（按 F1 開始 / F2 停止；F7 收交易；F8 提交易）：\n"
-        "  python trade_bot.py\n"
-    )
+    if args.full:
+        run_full_grid(load_old())
+
+    while True:
+        old = load_old()
+        has_grid = bool(old and old.get("inventory") and old.get("trade"))
+        f7 = (old or {}).get("f7", {}) if old else {}
+
+        def mark(cond):
+            return "✅" if cond else "⭕"
+
+        print("\n" + "=" * 60)
+        print("  要校正哪一區？（輸入數字，做錯只要重做那一區）")
+        print("  —— 背包 / 交易格 ——")
+        print(f"   [1] 完整校正 背包+交易格（第一次必做／換螢幕解析度）  {mark(has_grid)}")
+        print("   [2] 快速對位 背包+交易格（沿用間距，只指兩個左上角）")
+        print("  —— 交易點位（F7 收交易 / F8 提交易）——")
+        print(f"   [3] 交易請求（接受鈕，F7 收交易；需有交易邀請視窗）   {mark(f7.get('accept_btn'))}")
+        print(f"   [4] 前置點（F8 右鍵→左鍵）                          {mark(f7.get('preclick_rpos'))}")
+        print(f"   [5] 準備交易鈕                                      {mark(f7.get('prepare_btn'))}")
+        print(f"   [6] 確認鈕                                          {mark(f7.get('confirm_btn'))}")
+        print(f"   [7] 對方橘燈                                        {mark(f7.get('orange_pos'))}")
+        print("   [8] 交易點位 全部（3~7 一次做完）")
+        print("  —— ——")
+        print("   [0] 完成，離開")
+        choice = input("選擇：").strip().lower()
+
+        if choice in ("0", "q", "", "exit"):
+            break
+        if choice == "1":
+            run_full_grid(old)
+            continue
+        if choice == "2":
+            run_quick_grid(old)
+            continue
+        if choice in ("3", "4", "5", "6", "7", "8"):
+            if not has_grid:
+                print("⚠️ 還沒校正過背包/交易格，請先做 [1] 完整校正。")
+                continue
+            if tb is None:
+                print("⚠️ 載入交易點位設定失敗（可能缺套件），無法設定這區。")
+                continue
+            cfg = load_old()
+            try:
+                if choice == "3":
+                    tb.setup_accept(cfg)
+                elif choice == "4":
+                    tb.setup_preclick(cfg)
+                elif choice == "5":
+                    tb.setup_prepare(cfg)
+                elif choice == "6":
+                    tb.setup_confirm(cfg)
+                elif choice == "7":
+                    tb.setup_orange(cfg)
+                elif choice == "8":
+                    tb.setup_trade_points(cfg, include_accept=True)
+            except Exception as e:
+                print(f"（這區設定中途出錯，已跳過：{e}）")
+            continue
+        print("看不懂這個選項，請輸入 0~8。")
+
+    print("\n" + "=" * 60)
+    print("  校正結束。建議先確認有沒有抓對：")
+    print("    python trade_bot.py --debug     # 看綠圈有沒有框到球")
+    print("    python trade_bot.py --dry-run   # 只移動示範、不真的點")
+    print("  正式執行：雙擊 執行.bat（F1~F3 搬球 / F7 收交易 / F8 提交易）")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
