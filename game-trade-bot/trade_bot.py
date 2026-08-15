@@ -133,6 +133,7 @@ f6_active = threading.Event()          # 被設定 = F6 固定位置連點右鍵
 f6_lock = threading.Lock()             # 避免 F6 位置設定被重複觸發
 f7_active = threading.Event()          # 被設定 = F7 自動交易待命中
 f8_active = threading.Event()          # 被設定 = F8 提起交易端待命中（前置點＋準備＋確認）
+grabbing = threading.Event()           # 被設定 = F1/F2/F3 搬運進行中（與 F7/F8 分開，避免互相卡住）
 _f7_accept_ref = None                  # 快取：交易要求視窗樣本圖
 _f7_prepare_ref = None                 # 快取：準備鈕樣本圖
 
@@ -364,16 +365,19 @@ def run_sequence(cfg, dry_run=False, debug=False, count=None, det=None):
 
 
 def do_run(cfg, dry_run=False, debug=False, count=None, det=None):
-    """包一層：避免重複觸發、處理 failsafe，跑完自動解除忙碌狀態。"""
-    if not busy_lock.acquire(blocking=False):
-        print("（正在搬運中，忽略這次）")
+    """包一層：避免重複觸發、處理 failsafe，跑完自動解除忙碌狀態。
+    會等 F7/F8 放開忙碌鎖（最多幾秒），確保搬運能開始。"""
+    if not busy_lock.acquire(timeout=6):
+        print("（忙碌中，稍後再按一次）")
         return
+    grabbing.set()
     try:
         stop_event.clear()
         run_sequence(cfg, dry_run=dry_run, debug=debug, count=count, det=det)
     except pyautogui.FailSafeException:
         print("\n偵測到滑鼠移到左上角，已緊急中止。")
     finally:
+        grabbing.clear()
         stop_event.clear()
         busy_lock.release()
 
@@ -409,10 +413,16 @@ def rightclick_interval(cfg):
 
 # ---------- F1 / F2 / F3：開始搬運（不同顆數/辨識）；搬運中再按一次就停 ----------
 def on_start_trade(cfg, dry_run, debug, count, det=None):
-    if busy_lock.locked():
+    # 搬運中再按一次 = 停止（用 grabbing 旗標判斷，不看 busy_lock，避免和 F7/F8 搞混）
+    if grabbing.is_set():
         stop_event.set()
         print("停止搬運。")
         return
+    # 先停掉 F7/F8 自動交易，避免它們一直佔著忙碌鎖讓搬運跑不起來
+    if f7_active.is_set() or f8_active.is_set():
+        f7_active.clear()
+        f8_active.clear()
+        print("（已先停止 F7／F8 自動交易，改跑搬運）")
     threading.Thread(target=do_run, args=(cfg, dry_run, debug, count, det), daemon=True).start()
 
 
@@ -1103,19 +1113,21 @@ def f8_do_one(cfg):
     → 按準備 → 等對方橘燈 → 按確認。回傳文字結果。"""
     f7 = cfg["f7"]
     retries = int(f7.get("click_retries", 3))
-    # 0) 前置點（右鍵→延遲→左鍵）——這步就是去開啟交易
-    f8_preclick(cfg)
-    # 0.5) 前置後，等一下看『交易視窗有沒有開』；沒開就回傳，讓外層重來前置
-    opened = False
-    wend = time.time() + float(f7.get("window_wait", 2.5))
-    while time.time() < wend and f8_active.is_set() and not exit_event.is_set():
-        if f7_trade_window_open(cfg) is not False:  # True 或 None(沒樣板) 都當作開
-            opened = True
-            break
-        time.sleep(0.2)
-    if not opened:
-        return "沒開視窗"
-    # 1) 按準備交易（確認按到：準備鈕亮橘燈）
+    # 0) 只有『沒看到交易視窗』時才做前置點去開交易；已經有交易視窗就直接進入交易，
+    #    避免在交易視窗還開著時又按一次前置。
+    if f7_trade_window_open(cfg) is False:
+        f8_preclick(cfg)
+        # 前置後等一下看『交易視窗有沒有開』；沒開就回傳，讓外層重來前置
+        opened = False
+        wend = time.time() + float(f7.get("window_wait", 2.5))
+        while time.time() < wend and f8_active.is_set() and not exit_event.is_set():
+            if f7_trade_window_open(cfg) is not False:  # True 或 None(沒樣板) 都當作開
+                opened = True
+                break
+            time.sleep(0.2)
+        if not opened:
+            return "沒開視窗"
+    # 1) 到這裡代表有交易視窗 → 按準備交易（確認按到：準備鈕亮橘燈）
     print("F8：交易視窗開 → 按準備交易")
     if not f7_press_until_orange(
         cfg, f7["prepare_btn"], f7.get("after_prepare", 0.5), retries, "準備交易"
@@ -1230,30 +1242,26 @@ def setup_trade_points(cfg, include_accept=True):
     include_accept=True 時，會多問要不要設定 F7 的『接受鈕』(需要現在有交易邀請視窗)。"""
     f7 = cfg.get("f7", {})
     print("=" * 56)
-    print("  設定交易點位（F7 收交易 / F8 提交易 共用）")
+    print("  設定交易點位（一次做完，F7 收交易 / F8 提交易 都用這些）")
     print("=" * 56)
-    print("請先把『交易視窗』打開、看得到『準備交易』和『確認』兩顆鈕，再開始。\n")
+    print("開始前先把『交易視窗』打開、看得到『準備交易』和『確認』兩顆鈕。")
+    print("每一步：把滑鼠移到指定位置 → 按 Enter 記錄，共 5 個點：\n")
 
-    print("【前置點】F8 每筆一開始會先做的兩個點：")
-    pre_r = _capture_pos("① 前置『右鍵』要點的位置，按 Enter：")
-    pre_l = _capture_pos("② 前置『左鍵』要點的位置，按 Enter：")
-
-    prepare = _capture_pos("『準備交易』鈕 的位置，按 Enter：")
+    pre_r = _capture_pos("(1/5) 前置『右鍵』要點的位置（通常是角色/交易對象上），按 Enter：")
+    pre_l = _capture_pos("(2/5) 前置『左鍵』要點的位置（右鍵後選單「交易」選項的位置），按 Enter：")
+    prepare = _capture_pos("(3/5) 『準備交易』鈕 的位置，按 Enter：")
     pbox = _capture_button_template(prepare, f7.get("prepare_w", 90), f7.get("prepare_h", 44),
                                     F7_PREPARE_REF, "準備鈕（判斷交易視窗在不在）")
-
-    confirm = _capture_pos("『確認（完成交易）』鈕 的位置，按 Enter：")
-
-    print("讓對方橘燈亮起來並保持亮著（或先記位置也可以）。")
-    orange = _capture_pos("『對方橘燈』的位置，按 Enter：")
+    confirm = _capture_pos("(4/5) 『確認（完成交易）』鈕 的位置，按 Enter：")
+    orange = _capture_pos("(5/5) 『對方橘燈』的位置（對方準備好會亮的燈），按 Enter：")
 
     f7.update({"preclick_rpos": pre_r, "preclick_lpos": pre_l,
                "preclick_loff": [pre_l[0] - pre_r[0], pre_l[1] - pre_r[1]],
                "prepare_btn": prepare, "confirm_btn": confirm, "orange_pos": orange})
 
     if include_accept:
-        ans = input("\n要不要順便設定 F7『接受鈕』(別人找你交易時用)？"
-                    "需要現在畫面上有『交易邀請』視窗。(y=要 / 直接 Enter=跳過)：").strip().lower()
+        print("\n（選用）F7『收別人交易』才需要設定『接受鈕』——只有 F8 提交易的話可直接跳過。")
+        ans = input("  現在畫面上有『交易邀請』小視窗嗎？要設定就按 y，跳過直接 Enter：").strip().lower()
         if ans == "y":
             accept = _capture_pos("『接受』鈕 的位置，按 Enter：")
             abox = _capture_button_template(accept, f7.get("accept_w", 54), f7.get("accept_h", 44),
@@ -1276,9 +1284,16 @@ def setup_trade_points(cfg, include_accept=True):
         f7.setdefault(k, v)
     cfg["f7"] = f7
     save_config(cfg)
-    print("\n交易點位設定完成並存檔！")
-    print("  F8（提交易）：可直接用。")
-    print("  F7（收別人交易）：還需要設定『接受鈕』才完整（下次別人找你交易、邀請視窗出現時重設一次）。")
+    has_accept = bool(f7.get("accept_btn")) and os.path.exists(F7_ACCEPT_REF)
+    print("\n" + "=" * 56)
+    print("  交易點位設定完成並存檔！")
+    print("=" * 56)
+    print("  ✅ F8（自己提交易）：已可用，按 F8 開始。角色移動時按 Shift+F8 更新位置。")
+    print("  " + ("✅" if has_accept else "⭕") + " F7（收別人交易）："
+          + ("已可用，按 F7 開始。" if has_accept
+             else "還差『接受鈕』。等別人找你交易、邀請視窗出現時，"
+                  "再跑一次『校正.bat』(或 python trade_bot.py --setup-f7)，"
+                  "到最後那步按 y 設定即可。"))
 
 
 def setup_f7(cfg):
@@ -1329,6 +1344,7 @@ def hotkey_loop(cfg, dry_run, debug):
         f6_active.clear()
         f7_active.clear()
         f8_active.clear()
+        grabbing.clear()
         try:
             keyboard.clear_all_hotkeys()
         except Exception:
