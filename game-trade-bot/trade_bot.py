@@ -950,13 +950,12 @@ def f7_do_one_trade(cfg):
     if win is False:
         print("F7：沒偵測到交易視窗（準備鈕不在畫面上），不按準備，取消這筆。")
         return "無交易視窗"
-    # 4) 按準備交易（確認有點到：按鈕上亮橘燈）
+    # 4) 按準備交易——只按『一次』。不靠準備鈕變橘來重按：這遊戲的「準備好」是左下角
+    #    橘色橫條在亮，不是準備鈕本身，硬要靠鈕變橘判斷會一直重按、偶數次剛好把準備取消掉。
     print(f"F7：按準備交易（放上 {filled}/8）")
-    if not f7_press_until_orange(
-        cfg, f7["prepare_btn"], f7.get("after_prepare", 0.5), retries, "準備交易"
-    ):
-        print("F7：準備交易一直沒按到（橘燈沒亮／被中止），這筆未完成。")
-        return "準備失敗"
+    click(f7["prepare_btn"][0], f7["prepare_btn"][1], cfg)
+    if sleep_interruptible(f7.get("after_prepare", 0.5)):
+        return "中止"
     # 步驟間取球
     f6_grab_once(cfg)
     # 5) 等橘燈亮（對方也準備好）
@@ -1148,13 +1147,11 @@ def f8_do_one(cfg):
             time.sleep(0.2)
         if not opened:
             return "沒開視窗"
-    # 1) 到這裡代表有交易視窗 → 按準備交易（確認按到：準備鈕亮橘燈）
+    # 1) 到這裡代表有交易視窗 → 按準備交易（只按一次，不靠準備鈕變橘重按，避免越按越取消）
     print("F8：交易視窗開 → 按準備交易")
-    if not f7_press_until_orange(
-        cfg, f7["prepare_btn"], f7.get("after_prepare", 0.5), retries, "準備交易"
-    ):
-        print("F8：準備交易沒按到（或被中止），跳過這筆。")
-        return "準備失敗"
+    click(f7["prepare_btn"][0], f7["prepare_btn"][1], cfg)
+    if sleep_interruptible(f7.get("after_prepare", 0.5)):
+        return "中止"
     # 2) 等對方橘燈亮
     thr = f7.get("orange_ratio", 0.25)
     timeout = f7.get("orange_timeout", 10)
