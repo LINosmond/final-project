@@ -25,6 +25,23 @@ import os
 import sys
 import time
 
+
+# 先固定 DPI 感知（要在 import pyautogui / mss 之前），讓校正記的座標和執行時一致。
+def _make_dpi_aware():
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
+_make_dpi_aware()
+
 try:
     import pyautogui
 except ImportError:

@@ -41,6 +41,27 @@ import sys
 import threading
 import time
 
+
+# ---------------------------------------------------------------------------
+# 先固定 DPI 感知（一定要在 import mss / pyautogui 之前做）
+# 否則 Windows 顯示縮放不是 100% 時，滑鼠座標(邏輯像素)和抓畫面(實際像素)會對不上，
+# 造成「偵測位置全偏、抓錯球、偵測不到交易視窗」。校正與執行都用同一套實際像素座標。
+# ---------------------------------------------------------------------------
+def _make_dpi_aware():
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PER_MONITOR_AWARE
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()       # 舊系統退回這個
+    except Exception:
+        pass
+
+
+_make_dpi_aware()
+
 import numpy as np
 
 try:
@@ -1316,6 +1337,11 @@ def hotkey_loop(cfg, dry_run, debug):
     f6_set = bool(f6_pos(cfg))
     print("=" * 52)
     print("  點擊方式：" + ("Windows SendInput（遊戲相容）" if _USE_SENDINPUT else "pyautogui"))
+    try:
+        sw, sh = pyautogui.size()
+        print(f"  螢幕解析度：{sw} x {sh}（已固定 DPI 感知；此值應等於你的實際解析度）")
+    except Exception:
+        pass
     print("  熱鍵待命中：")
     print(f"    F1 = 開始搬運 綠球（{F1_COUNT} 顆）；搬運中再按一次 = 停止")
     print(f"    F2 = 開始搬運 綠球（{F2_COUNT} 顆）；搬運中再按一次 = 停止")
