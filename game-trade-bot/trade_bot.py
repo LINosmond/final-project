@@ -132,6 +132,7 @@ two_click_lock = threading.Lock()      # 避免 F5 兩點設定被重複觸發
 f6_active = threading.Event()          # 被設定 = F6 固定位置連點右鍵進行中
 f6_lock = threading.Lock()             # 避免 F6 位置設定被重複觸發
 f7_active = threading.Event()          # 被設定 = F7 自動交易待命中
+f8_active = threading.Event()          # 被設定 = F8 提起交易端待命中（只按準備＋確認）
 _f7_accept_ref = None                  # 快取：交易要求視窗樣本圖
 _f7_prepare_ref = None                 # 快取：準備鈕樣本圖
 
@@ -1015,6 +1016,99 @@ def on_f7(cfg):
     threading.Thread(target=f7_watch, args=(cfg,), daemon=True).start()
 
 
+# ---------------------------------------------------------------------------
+# F8：提起交易端（自己發起交易的人）—— 只做兩步：按準備交易 → 對方橘燈亮 → 按確認交易
+# ---------------------------------------------------------------------------
+def f8_ready(cfg):
+    f7 = cfg.get("f7", {})
+    need = ["prepare_btn", "confirm_btn", "orange_pos"]
+    return all(f7.get(k) for k in need) and os.path.exists(F7_PREPARE_REF)
+
+
+def f8_do_one(cfg):
+    """提起交易端一筆：按準備 → 等對方橘燈 → 按確認。回傳文字結果。"""
+    f7 = cfg["f7"]
+    retries = int(f7.get("click_retries", 3))
+    # 1) 按準備交易（確認按到：準備鈕亮橘燈）
+    print("F8：交易視窗開 → 按準備交易")
+    if not f7_press_until_orange(
+        cfg, f7["prepare_btn"], f7.get("after_prepare", 0.5), retries, "準備交易"
+    ):
+        print("F8：準備交易沒按到（或被中止），跳過這筆。")
+        return "準備失敗"
+    # 2) 等對方橘燈亮
+    thr = f7.get("orange_ratio", 0.25)
+    timeout = f7.get("orange_timeout", 10)
+    print(f"F8：等對方準備（橘燈）…（門檻 {thr}，最多等 {timeout:.0f}s）")
+    waited = 0.0
+    last_print = 0.0
+    with mss.mss() as sct:
+        while waited < timeout and f8_active.is_set() and not exit_event.is_set():
+            if f7_orange_ratio(sct, cfg) >= thr:
+                break
+            # 交易格球全消失（視窗關閉／被取消）→ 放棄
+            if _filled_slots_in(grab_screen(sct), cfg) == 0 and waited > 1.0:
+                print("F8：交易格清空（視窗關閉／被取消），放棄這筆。")
+                return "交易已關閉"
+            if waited - last_print >= 2.0:
+                print(f"F8：等橘燈中…目前 {f7_orange_ratio(sct, cfg):.2f} / 需要 ≥ {thr}（已等 {waited:.0f}s）")
+                last_print = waited
+            time.sleep(0.3)
+            waited += 0.3
+        if f7_orange_ratio(sct, cfg) < thr:
+            print(f"F8：等對方橘燈逾時（{timeout:.0f}s），跳過這筆。")
+            return "橘燈逾時"
+    # 3) 按確認完成
+    print("F8：對方橘燈亮 → 按確認，完成交易 ✅")
+    if not f7_press_until_orange(
+        cfg, f7["confirm_btn"], f7.get("after_confirm", 1.0), retries,
+        "確認交易", also_closed=True
+    ):
+        print("F8：確認交易可能沒按到，請留意這筆是否完成。")
+        return "確認未確定"
+    return "完成"
+
+
+def f8_watch(cfg):
+    print("F8：提起交易端待命中（偵測到交易視窗就 按準備→等對方橘燈→按確認）。再按 F8 停止。")
+    while f8_active.is_set() and not exit_event.is_set():
+        try:
+            # 只在偵測到『交易視窗開著（準備鈕在、還沒被按亮）』時才動作；
+            # 按下準備後準備鈕會變亮、這裡就不會重複觸發，等視窗關掉、下一筆重開才再跑。
+            if f7_trade_window_open(cfg) is True:
+                if not busy_lock.acquire(blocking=False):
+                    time.sleep(0.5)
+                    continue
+                try:
+                    result = f8_do_one(cfg)
+                    print(f"F8：本筆結果 = {result}。繼續待命…")
+                except pyautogui.FailSafeException:
+                    print("F8：滑鼠到左上角，中止本筆。")
+                finally:
+                    stop_event.clear()
+                    busy_lock.release()
+                time.sleep(cfg.get("f7", {}).get("cooldown", 2.0))
+        except pyautogui.FailSafeException:
+            time.sleep(1.0)
+        time.sleep(cfg.get("f7", {}).get("poll", 0.4))
+
+
+def on_f8(cfg):
+    if f8_active.is_set():
+        f8_active.clear()
+        print("F8：停止提起交易端自動。")
+        return
+    if f7_active.is_set():
+        print("F8：請先關掉 F7（自動交易）再用 F8，避免兩個同時搶著操作。")
+        return
+    if not f8_ready(cfg):
+        print("F8：還沒設定好（需要準備鈕、確認鈕、對方橘燈位置＋準備鈕樣板）。"
+              "請先執行： python trade_bot.py --setup-f7")
+        return
+    f8_active.set()
+    threading.Thread(target=f8_watch, args=(cfg,), daemon=True).start()
+
+
 def _capture_pos(prompt):
     print(prompt)
     if keyboard is not None:
@@ -1101,6 +1195,7 @@ def hotkey_loop(cfg, dry_run, debug):
     keyboard.add_hotkey("f6", lambda: on_f6(cfg))
     keyboard.add_hotkey("shift+f6", lambda: on_reset_f6(cfg))
     keyboard.add_hotkey("f7", lambda: on_f7(cfg))
+    keyboard.add_hotkey("f8", lambda: on_f8(cfg))
     two_set = bool(two_click_cfg(cfg).get("pos_a"))
     f6_set = bool(f6_pos(cfg))
     print("=" * 52)
@@ -1116,6 +1211,8 @@ def hotkey_loop(cfg, dry_run, debug):
     print("    Shift+F6 = 重新設定 F6 的位置")
     print("    F7 = 自動交易 開／關（偵測有人要求交易→接受→放滿8格→準備→橘燈亮→確認）"
           + ("" if f7_ready(cfg) else "（尚未設定：python trade_bot.py --setup-f7）"))
+    print("    F8 = 提起交易端 開／關（只按準備→等對方橘燈→按確認；自己發起交易的人用）"
+          + ("" if f8_ready(cfg) else "（尚未設定：python trade_bot.py --setup-f7）"))
     print("    （滑鼠甩到螢幕左上角 = 緊急停止；要結束程式關掉視窗或 Ctrl+C）")
     print("=" * 52)
     try:
@@ -1129,6 +1226,7 @@ def hotkey_loop(cfg, dry_run, debug):
         two_click_active.clear()
         f6_active.clear()
         f7_active.clear()
+        f8_active.clear()
         try:
             keyboard.clear_all_hotkeys()
         except Exception:
