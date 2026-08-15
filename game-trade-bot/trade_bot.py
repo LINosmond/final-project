@@ -1265,29 +1265,33 @@ def setup_trade_points(cfg, include_accept=True):
     print("=" * 56)
     print("  設定交易點位（一次做完，F7 收交易 / F8 提交易 都用這些）")
     print("=" * 56)
-    print("開始前先把『交易視窗』打開、看得到『準備交易』和『確認』兩顆鈕。")
-    print("每一步：把滑鼠移到指定位置 → 按 Enter 記錄，共 5 個點：\n")
+    print("順序照實際交易走：先『交易請求(接受鈕)』→ 再『交易視窗裡的按鈕』。")
+    print("每一步：把滑鼠移到指定位置 → 按 Enter 記錄。\n")
 
+    # (0) 交易請求（接受鈕）——排在最前面：照實際順序，先有交易請求→接受→交易視窗才開。
+    #     只有 F7『收別人交易』要用；F8 提交易可跳過。需要現在畫面上有交易邀請視窗。
+    if include_accept:
+        print("【交易請求】F7 收別人交易用（F8 提交易可跳過）。")
+        ans = input("  現在畫面上有『交易邀請/交易請求』小視窗嗎？要設接受鈕就按 y，跳過直接 Enter：").strip().lower()
+        if ans == "y":
+            accept = _capture_pos("『接受』鈕 的位置，按 Enter：")
+            abox = _capture_button_template(accept, f7.get("accept_w", 54), f7.get("accept_h", 44),
+                                            F7_ACCEPT_REF, "接受鈕")
+            f7.update({"accept_btn": accept, "accept_box": abox})
+            print("  （接受後把交易視窗打開，看得到準備/確認鈕，再繼續下面步驟）\n")
+
+    print("以下是交易視窗裡的點位（把交易視窗打開再指）：")
     pre_r = _capture_pos("(1/5) 前置『右鍵』要點的位置（通常是角色/交易對象上），按 Enter：")
     pre_l = _capture_pos("(2/5) 前置『左鍵』要點的位置（右鍵後選單「交易」選項的位置），按 Enter：")
     prepare = _capture_pos("(3/5) 『準備交易』鈕 的位置，按 Enter：")
-    pbox = _capture_button_template(prepare, f7.get("prepare_w", 90), f7.get("prepare_h", 44),
-                                    F7_PREPARE_REF, "準備鈕（判斷交易視窗在不在）")
+    _capture_button_template(prepare, f7.get("prepare_w", 90), f7.get("prepare_h", 44),
+                             F7_PREPARE_REF, "準備鈕（判斷交易視窗在不在）")
     confirm = _capture_pos("(4/5) 『確認（完成交易）』鈕 的位置，按 Enter：")
     orange = _capture_pos("(5/5) 『對方橘燈』的位置（對方準備好會亮的燈），按 Enter：")
 
     f7.update({"preclick_rpos": pre_r, "preclick_lpos": pre_l,
                "preclick_loff": [pre_l[0] - pre_r[0], pre_l[1] - pre_r[1]],
                "prepare_btn": prepare, "confirm_btn": confirm, "orange_pos": orange})
-
-    if include_accept:
-        print("\n（選用）F7『收別人交易』才需要設定『接受鈕』——只有 F8 提交易的話可直接跳過。")
-        ans = input("  現在畫面上有『交易邀請』小視窗嗎？要設定就按 y，跳過直接 Enter：").strip().lower()
-        if ans == "y":
-            accept = _capture_pos("『接受』鈕 的位置，按 Enter：")
-            abox = _capture_button_template(accept, f7.get("accept_w", 54), f7.get("accept_h", 44),
-                                            F7_ACCEPT_REF, "接受鈕")
-            f7.update({"accept_btn": accept, "accept_box": abox})
 
     for k, v in {"accept_score": 0.75, "search_full": True,
                  "search_w": 600, "search_h": 400,
