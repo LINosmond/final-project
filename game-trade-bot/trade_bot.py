@@ -931,7 +931,7 @@ def f7_do_one_trade(cfg):
     thr = f7.get("orange_ratio", 0.25)
     print(f"F7：等對方準備（橘燈）…（門檻橘色比例 {thr}）")
     waited = 0.0
-    timeout = f7.get("orange_timeout", 30)
+    timeout = f7.get("orange_timeout", 10)
     last_print = 0.0
     with mss.mss() as sct:
         while waited < timeout and f7_active.is_set() and not exit_event.is_set():
@@ -1074,7 +1074,7 @@ def setup_f7(cfg):
                "prepare_btn": prepare, "confirm_btn": confirm, "orange_pos": orange})
     for k, v in {"accept_score": 0.75, "search_full": True,
                  "search_w": 600, "search_h": 400,
-                 "orange_ratio": 0.25, "orange_timeout": 180,
+                 "orange_ratio": 0.25, "orange_timeout": 10,
                  "after_accept": 1.0, "after_prepare": 0.5, "after_confirm": 1.0,
                  "cooldown": 2.0, "poll": 0.4, "orange_w": 26, "orange_h": 26,
                  "click_retries": 3, "after_grab": 0.6,
