@@ -132,8 +132,7 @@ two_click_lock = threading.Lock()      # 避免 F5 兩點設定被重複觸發
 f6_active = threading.Event()          # 被設定 = F6 固定位置連點右鍵進行中
 f6_lock = threading.Lock()             # 避免 F6 位置設定被重複觸發
 f7_active = threading.Event()          # 被設定 = F7 自動交易待命中
-f8_active = threading.Event()          # 被設定 = F8 提起交易端待命中（只按準備＋確認）
-preclick_lock = threading.Lock()       # 避免 F9 位置設定被重複觸發
+f8_active = threading.Event()          # 被設定 = F8 提起交易端待命中（前置點＋準備＋確認）
 _f7_accept_ref = None                  # 快取：交易要求視窗樣本圖
 _f7_prepare_ref = None                 # 快取：準備鈕樣本圖
 
@@ -543,73 +542,6 @@ def on_two_click(cfg):
 def on_reset_two_click(cfg):
     two_click_active.clear()
     threading.Thread(target=record_two_click, args=(cfg,), daemon=True).start()
-
-
-# ---------- F9：目前位置按右鍵 → 延遲 → 固定偏移位置按左鍵（前置點動作，按一次做一次）----------
-def preclick_offset(cfg):
-    return (cfg.get("preclick") or {}).get("offset")
-
-
-def preclick_delay(cfg):
-    return (cfg.get("preclick") or {}).get("delay", 0.3)
-
-
-def record_preclick(cfg):
-    if keyboard is None:
-        print("F9 設定需要 keyboard 套件。")
-        return
-    if not preclick_lock.acquire(blocking=False):
-        return
-    try:
-        print("\n== 設定 F9：右鍵點 → 延遲 → 左鍵點（記兩個位置算出固定距離）==")
-        print("先把滑鼠移到【右鍵要點的位置】後按 Enter…")
-        if not wait_enter_press():
-            return
-        a = list(pyautogui.position())
-        print(f"  右鍵位置 = {a}")
-        time.sleep(0.25)
-        print("再把滑鼠移到【左鍵要點的位置】後按 Enter…")
-        if not wait_enter_press():
-            return
-        b = list(pyautogui.position())
-        print(f"  左鍵位置 = {b}")
-        offset = [b[0] - a[0], b[1] - a[1]]
-        cfg["preclick"] = {"offset": offset, "delay": preclick_delay(cfg)}
-        save_config(cfg)
-        print(f"F9 設定完成：按 F9 = 在『目前滑鼠位置』按右鍵、等 {preclick_delay(cfg)}s、"
-              f"再到偏移 {offset} 的位置按左鍵。要重設按 Shift+F9。\n")
-    finally:
-        preclick_lock.release()
-
-
-def preclick_once(cfg):
-    off = preclick_offset(cfg)
-    if not off:
-        return
-    d = cfg["timing"].get("move_duration", 0.15)
-    hold = cfg["timing"].get("click_hold", 0.03)
-    delay = preclick_delay(cfg)
-    try:
-        x, y = pyautogui.position()   # 以按下當下的滑鼠位置為準
-        press_click("right", hold)    # 1) 目前位置按右鍵
-        time.sleep(delay)             # 2) 延遲
-        pyautogui.moveTo(x + off[0], y + off[1], duration=d)  # 3) 固定偏移位置
-        time.sleep(0.02)
-        press_click("left", hold)     #    按左鍵
-        print(f"F9：右鍵({x},{y}) → 等{delay}s → 左鍵({x + off[0]},{y + off[1]})")
-    except pyautogui.FailSafeException:
-        print("F9：偵測到滑鼠到左上角，已中止。")
-
-
-def on_f9(cfg):
-    if not preclick_offset(cfg):
-        threading.Thread(target=record_preclick, args=(cfg,), daemon=True).start()
-        return
-    threading.Thread(target=preclick_once, args=(cfg,), daemon=True).start()
-
-
-def on_reset_f9(cfg):
-    threading.Thread(target=record_preclick, args=(cfg,), daemon=True).start()
 
 
 # ---------- F6：在固定位置連點右鍵（開關；Shift+F6 設定位置）----------
@@ -1093,10 +1025,33 @@ def f8_ready(cfg):
     return all(f7.get(k) for k in need) and os.path.exists(F7_PREPARE_REF)
 
 
+def f8_preclick(cfg):
+    """前置點：在固定的『右鍵位置』按右鍵 → 延遲 → 在固定的『左鍵位置』按左鍵。
+    兩個位置沒設定就跳過（不影響後面流程）。"""
+    f7 = cfg["f7"]
+    rp = f7.get("preclick_rpos")
+    lp = f7.get("preclick_lpos")
+    if not rp or not lp:
+        return
+    d = cfg["timing"].get("move_duration", 0.15)
+    hold = cfg["timing"].get("click_hold", 0.03)
+    delay = float(f7.get("preclick_delay", 0.3))
+    pyautogui.moveTo(rp[0], rp[1], duration=d)
+    time.sleep(0.02)
+    press_click("right", hold)
+    time.sleep(delay)
+    pyautogui.moveTo(lp[0], lp[1], duration=d)
+    time.sleep(0.02)
+    press_click("left", hold)
+    print(f"F8：前置點 右鍵{rp} → 等{delay}s → 左鍵{lp}")
+
+
 def f8_do_one(cfg):
-    """提起交易端一筆：按準備 → 等對方橘燈 → 按確認。回傳文字結果。"""
+    """提起交易端一筆：前置點 → 按準備 → 等對方橘燈 → 按確認。回傳文字結果。"""
     f7 = cfg["f7"]
     retries = int(f7.get("click_retries", 3))
+    # 0) 前置點（右鍵→延遲→左鍵）
+    f8_preclick(cfg)
     # 1) 按準備交易（確認按到：準備鈕亮橘燈）
     print("F8：交易視窗開 → 按準備交易")
     if not f7_press_until_orange(
@@ -1138,7 +1093,7 @@ def f8_do_one(cfg):
 
 
 def f8_watch(cfg):
-    print("F8：提起交易端待命中（偵測到交易視窗就 按準備→等對方橘燈→按確認）。再按 F8 停止。")
+    print("F8：提起交易端待命中（偵測到交易視窗就 前置點→按準備→等對方橘燈→按確認）。再按 F8 停止。")
     while f8_active.is_set() and not exit_event.is_set():
         try:
             # 只在偵測到『交易視窗開著（準備鈕在、還沒被按亮）』時才動作；
@@ -1171,7 +1126,7 @@ def on_f8(cfg):
         return
     if not f8_ready(cfg):
         print("F8：還沒設定好（需要準備鈕、確認鈕、對方橘燈位置＋準備鈕樣板）。"
-              "請先執行： python trade_bot.py --setup-f7")
+              "請先跑『校正.bat』一併設定交易點位（或 python trade_bot.py --setup-f7）。")
         return
     f8_active.set()
     threading.Thread(target=f8_watch, args=(cfg,), daemon=True).start()
@@ -1189,57 +1144,62 @@ def _capture_pos(prompt):
     return p
 
 
-def setup_f7(cfg):
-    print("=" * 56)
-    print("  F7 自動交易 設定（需要一次真實交易，建議找朋友配合）")
-    print("=" * 56)
-    f7 = cfg.get("f7", {})
-
-    print("\n步驟 1：請朋友點你、要求交易，讓『要求交易』小視窗跳出來並【保持顯示】。")
-    accept = _capture_pos("把滑鼠移到小視窗的『接受』鈕上，按 Enter：")
-    # 先把滑鼠移開再拍：避免拍到「滑鼠移上去時按鈕反白／變色」的樣子，
-    # 否則實際偵測時滑鼠不在上面，按鈕長得不一樣，分數會偏低抓不到。
+def _capture_button_template(center, w, h, ref_path, name):
+    """把滑鼠移開後拍下按鈕小樣板存檔（避免拍到滑鼠移上去的反白狀態）。回傳擷取框。"""
     try:
-        away_x = accept[0] - 220 if accept[0] > 260 else accept[0] + 220
-        pyautogui.moveTo(max(0, away_x), accept[1], duration=0.12)
+        away_x = center[0] - 220 if center[0] > 260 else center[0] + 220
+        pyautogui.moveTo(max(0, away_x), center[1], duration=0.12)
     except Exception:
         pass
     time.sleep(0.5)
     with mss.mss() as sct:
         img = grab_screen(sct)
-    # 只拍『接受鈕』小圖案當樣板（不吃背景，之後背景變了也認得）
-    box = _region_box(accept, f7.get("accept_w", 54), f7.get("accept_h", 44), img.shape)
-    cv2.imwrite(F7_ACCEPT_REF, _crop_box(img, box))
-    print("  已拍下『接受鈕』樣板（已把滑鼠移開，拍按鈕的正常狀態）。\n")
+    box = _region_box(center, w, h, img.shape)
+    cv2.imwrite(ref_path, _crop_box(img, box))
+    print(f"  已拍下『{name}』樣板。\n")
+    return box
 
-    print("步驟 2：按接受把交易視窗打開（可手動），把畫面弄到看得到『準備交易』和『確認』兩顆鈕。")
-    prepare = _capture_pos("把滑鼠移到『準備交易』鈕上，按 Enter：")
-    # 順便拍下『準備鈕』樣板，之後用來判斷交易視窗在不在（滑鼠先移開，拍正常狀態）
-    try:
-        away_x = prepare[0] - 220 if prepare[0] > 260 else prepare[0] + 220
-        pyautogui.moveTo(max(0, away_x), prepare[1], duration=0.12)
-    except Exception:
-        pass
-    time.sleep(0.5)
-    with mss.mss() as sct:
-        img2 = grab_screen(sct)
-    pbox = _region_box(prepare, f7.get("prepare_w", 90), f7.get("prepare_h", 44), img2.shape)
-    cv2.imwrite(F7_PREPARE_REF, _crop_box(img2, pbox))
-    print("  已拍下『準備鈕』樣板（用來判斷有沒有交易視窗）。\n")
 
-    confirm = _capture_pos("把滑鼠移到『確認（完成交易）』鈕上，按 Enter：")
+def setup_trade_points(cfg, include_accept=True):
+    """設定 F7（收交易）/ F8（提交易）共用的交易點位。需要『交易視窗』開著。
+    include_accept=True 時，會多問要不要設定 F7 的『接受鈕』(需要現在有交易邀請視窗)。"""
+    f7 = cfg.get("f7", {})
+    print("=" * 56)
+    print("  設定交易點位（F7 收交易 / F8 提交易 共用）")
+    print("=" * 56)
+    print("請先把『交易視窗』打開、看得到『準備交易』和『確認』兩顆鈕，再開始。\n")
 
-    print("步驟 3：讓對方也按準備、讓旁邊的『橘燈』亮起來並保持亮著。")
-    orange = _capture_pos("把滑鼠移到『橘燈』上，按 Enter：")
+    print("【前置點】F8 每筆一開始會先做的兩個點：")
+    pre_r = _capture_pos("① 前置『右鍵』要點的位置，按 Enter：")
+    pre_l = _capture_pos("② 前置『左鍵』要點的位置，按 Enter：")
 
-    f7.update({"accept_btn": accept, "accept_box": box,
+    prepare = _capture_pos("『準備交易』鈕 的位置，按 Enter：")
+    pbox = _capture_button_template(prepare, f7.get("prepare_w", 90), f7.get("prepare_h", 44),
+                                    F7_PREPARE_REF, "準備鈕（判斷交易視窗在不在）")
+
+    confirm = _capture_pos("『確認（完成交易）』鈕 的位置，按 Enter：")
+
+    print("讓對方橘燈亮起來並保持亮著（或先記位置也可以）。")
+    orange = _capture_pos("『對方橘燈』的位置，按 Enter：")
+
+    f7.update({"preclick_rpos": pre_r, "preclick_lpos": pre_l,
                "prepare_btn": prepare, "confirm_btn": confirm, "orange_pos": orange})
+
+    if include_accept:
+        ans = input("\n要不要順便設定 F7『接受鈕』(別人找你交易時用)？"
+                    "需要現在畫面上有『交易邀請』視窗。(y=要 / 直接 Enter=跳過)：").strip().lower()
+        if ans == "y":
+            accept = _capture_pos("『接受』鈕 的位置，按 Enter：")
+            abox = _capture_button_template(accept, f7.get("accept_w", 54), f7.get("accept_h", 44),
+                                            F7_ACCEPT_REF, "接受鈕")
+            f7.update({"accept_btn": accept, "accept_box": abox})
+
     for k, v in {"accept_score": 0.75, "search_full": True,
                  "search_w": 600, "search_h": 400,
                  "orange_ratio": 0.25, "orange_timeout": 10,
                  "after_accept": 1.0, "after_prepare": 0.5, "after_confirm": 1.0,
                  "cooldown": 2.0, "poll": 0.4, "orange_w": 26, "orange_h": 26,
-                 "click_retries": 3, "after_grab": 0.6,
+                 "click_retries": 3, "after_grab": 0.6, "preclick_delay": 0.3,
                  "accept_gone_wait": 3.0, "accept_gone_reads": 3,
                  "btn_orange_ratio": 0.15, "btn_orange_w": 44, "btn_orange_h": 44,
                  "orange_wait": 2.5, "orange_hmin": 8, "orange_hmax": 25,
@@ -1249,8 +1209,13 @@ def setup_f7(cfg):
         f7.setdefault(k, v)
     cfg["f7"] = f7
     save_config(cfg)
-    print("\nF7 設定完成並存檔！回主程式（python trade_bot.py）按 F7 開始自動交易待命。")
-    print("提醒：F7 會真的把球送出去，請先小額測試確認流程正確。")
+    print("\n交易點位設定完成並存檔！")
+    print("  F8（提交易）：可直接用。")
+    print("  F7（收別人交易）：還需要設定『接受鈕』才完整（下次別人找你交易、邀請視窗出現時重設一次）。")
+
+
+def setup_f7(cfg):
+    setup_trade_points(cfg, include_accept=True)
 
 
 def hotkey_loop(cfg, dry_run, debug):
@@ -1264,8 +1229,6 @@ def hotkey_loop(cfg, dry_run, debug):
     keyboard.add_hotkey("shift+f6", lambda: on_reset_f6(cfg))
     keyboard.add_hotkey("f7", lambda: on_f7(cfg))
     keyboard.add_hotkey("f8", lambda: on_f8(cfg))
-    keyboard.add_hotkey("f9", lambda: on_f9(cfg))
-    keyboard.add_hotkey("shift+f9", lambda: on_reset_f9(cfg))
     two_set = bool(two_click_cfg(cfg).get("pos_a"))
     f6_set = bool(f6_pos(cfg))
     print("=" * 52)
@@ -1281,11 +1244,8 @@ def hotkey_loop(cfg, dry_run, debug):
     print("    Shift+F6 = 重新設定 F6 的位置")
     print("    F7 = 自動交易 開／關（偵測有人要求交易→接受→放滿8格→準備→橘燈亮→確認）"
           + ("" if f7_ready(cfg) else "（尚未設定：python trade_bot.py --setup-f7）"))
-    print("    F8 = 提起交易端 開／關（只按準備→等對方橘燈→按確認；自己發起交易的人用）"
-          + ("" if f8_ready(cfg) else "（尚未設定：python trade_bot.py --setup-f7）"))
-    print("    F9 = 前置點：目前位置按右鍵→等0.3s→固定偏移位置按左鍵（按一次做一次）"
-          + ("" if preclick_offset(cfg) else "（第一次按會先請你設定兩個位置）"))
-    print("    Shift+F9 = 重新設定 F9 的兩個位置")
+    print("    F8 = 提起交易端 開／關（前置點右鍵→左鍵 → 按準備 → 等對方橘燈 → 按確認）"
+          + ("" if f8_ready(cfg) else "（尚未設定：跑 校正.bat 一併設定交易點位）"))
     print("    （滑鼠甩到螢幕左上角 = 緊急停止；要結束程式關掉視窗或 Ctrl+C）")
     print("=" * 52)
     try:

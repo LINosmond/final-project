@@ -243,12 +243,28 @@ def main():
     print("=" * 60)
     print(f"已存好設定：{CONFIG_PATH}")
     print("=" * 60)
+
+    # 順便設定交易點位（F7 收交易 / F8 提交易）
+    ans = input(
+        "\n要不要順便設定『交易點位』(F7 自動交易 / F8 提起交易端)？\n"
+        "  需要現在把『交易視窗』打開、看得到準備/確認鈕。\n"
+        "  設定（直接 Enter=設定 / n=跳過）："
+    ).strip().lower()
+    if ans != "n":
+        try:
+            import trade_bot  # 重用主程式的交易點位設定（含拍準備鈕樣板）
+            trade_bot.setup_trade_points(config, include_accept=True)
+        except SystemExit as e:
+            print(f"（設定交易點位需要的套件缺少：{e}）")
+        except Exception as e:
+            print(f"（設定交易點位時發生問題，已跳過：{e}）")
+
     print(
         "\n建議先『空跑』確認有沒有抓對（不會真的點）：\n"
         "  python trade_bot.py --dry-run\n\n"
         "看偵測圖：\n"
         "  python trade_bot.py --debug\n\n"
-        "正式執行（按 F1 開始 / F2 停止）：\n"
+        "正式執行（按 F1 開始 / F2 停止；F7 收交易；F8 提交易）：\n"
         "  python trade_bot.py\n"
     )
 
