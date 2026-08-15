@@ -295,9 +295,12 @@ def main():
         print("   [8] 交易點位 全部（3~7 一次做完）")
         print("  —— ——")
         print("   [0] 完成，離開")
-        choice = input("選擇：").strip().lower()
+        choice = input("選擇（設定完會回到這個選單；要離開才按 0）：").strip().lower()
 
-        if choice in ("0", "q", "", "exit"):
+        if choice == "":
+            # 直接按 Enter（或上一步記點殘留的 Enter）不做事，重新顯示選單，不會離開
+            continue
+        if choice in ("0", "q", "exit", "quit"):
             break
         if choice == "1":
             run_full_grid(old)
