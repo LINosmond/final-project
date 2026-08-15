@@ -942,10 +942,11 @@ def f7_do_one_trade(cfg):
             if f7_trade_request_present(sct, cfg):
                 print("F7：等橘燈時又出現交易邀請 → 放棄這筆空交易，改去處理新的邀請。")
                 return "有新邀請"
-            # 保險②：交易視窗其實已經不見（準備鈕不在了）→ 也別空等
-            if f7_trade_window_open(cfg) is False:
-                print("F7：等橘燈時偵測不到交易視窗（可能沒真的開起／已關閉），放棄這筆。")
-                return "無交易視窗"
+            # 保險②：交易格裡的球整個不見了（視窗關閉／交易被取消）→ 才放棄。
+            #   注意：不能用準備鈕圖案判斷，因為按下準備後準備鈕會亮橘燈、外觀變了會誤判。
+            if _filled_slots_in(grab_screen(sct), cfg) == 0:
+                print("F7：等橘燈時交易格的球全消失（視窗關閉／被取消），放棄這筆。")
+                return "交易已關閉"
             # 每約 2 秒回報一次目前偵測到的橘色比例，避免看起來像發呆、也方便對門檻
             if waited - last_print >= 2.0:
                 print(f"F7：等橘燈中…目前橘色比例 {r:.2f} / 需要 ≥ {thr}（已等 {waited:.0f}s）")
@@ -1073,7 +1074,7 @@ def setup_f7(cfg):
                "prepare_btn": prepare, "confirm_btn": confirm, "orange_pos": orange})
     for k, v in {"accept_score": 0.75, "search_full": True,
                  "search_w": 600, "search_h": 400,
-                 "orange_ratio": 0.25, "orange_timeout": 30,
+                 "orange_ratio": 0.25, "orange_timeout": 180,
                  "after_accept": 1.0, "after_prepare": 0.5, "after_confirm": 1.0,
                  "cooldown": 2.0, "poll": 0.4, "orange_w": 26, "orange_h": 26,
                  "click_retries": 3, "after_grab": 0.6,
