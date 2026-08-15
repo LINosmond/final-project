@@ -133,6 +133,7 @@ f6_active = threading.Event()          # 被設定 = F6 固定位置連點右鍵
 f6_lock = threading.Lock()             # 避免 F6 位置設定被重複觸發
 f7_active = threading.Event()          # 被設定 = F7 自動交易待命中
 f8_active = threading.Event()          # 被設定 = F8 提起交易端待命中（只按準備＋確認）
+preclick_lock = threading.Lock()       # 避免 F9 位置設定被重複觸發
 _f7_accept_ref = None                  # 快取：交易要求視窗樣本圖
 _f7_prepare_ref = None                 # 快取：準備鈕樣本圖
 
@@ -542,6 +543,73 @@ def on_two_click(cfg):
 def on_reset_two_click(cfg):
     two_click_active.clear()
     threading.Thread(target=record_two_click, args=(cfg,), daemon=True).start()
+
+
+# ---------- F9：目前位置按右鍵 → 延遲 → 固定偏移位置按左鍵（前置點動作，按一次做一次）----------
+def preclick_offset(cfg):
+    return (cfg.get("preclick") or {}).get("offset")
+
+
+def preclick_delay(cfg):
+    return (cfg.get("preclick") or {}).get("delay", 0.3)
+
+
+def record_preclick(cfg):
+    if keyboard is None:
+        print("F9 設定需要 keyboard 套件。")
+        return
+    if not preclick_lock.acquire(blocking=False):
+        return
+    try:
+        print("\n== 設定 F9：右鍵點 → 延遲 → 左鍵點（記兩個位置算出固定距離）==")
+        print("先把滑鼠移到【右鍵要點的位置】後按 Enter…")
+        if not wait_enter_press():
+            return
+        a = list(pyautogui.position())
+        print(f"  右鍵位置 = {a}")
+        time.sleep(0.25)
+        print("再把滑鼠移到【左鍵要點的位置】後按 Enter…")
+        if not wait_enter_press():
+            return
+        b = list(pyautogui.position())
+        print(f"  左鍵位置 = {b}")
+        offset = [b[0] - a[0], b[1] - a[1]]
+        cfg["preclick"] = {"offset": offset, "delay": preclick_delay(cfg)}
+        save_config(cfg)
+        print(f"F9 設定完成：按 F9 = 在『目前滑鼠位置』按右鍵、等 {preclick_delay(cfg)}s、"
+              f"再到偏移 {offset} 的位置按左鍵。要重設按 Shift+F9。\n")
+    finally:
+        preclick_lock.release()
+
+
+def preclick_once(cfg):
+    off = preclick_offset(cfg)
+    if not off:
+        return
+    d = cfg["timing"].get("move_duration", 0.15)
+    hold = cfg["timing"].get("click_hold", 0.03)
+    delay = preclick_delay(cfg)
+    try:
+        x, y = pyautogui.position()   # 以按下當下的滑鼠位置為準
+        press_click("right", hold)    # 1) 目前位置按右鍵
+        time.sleep(delay)             # 2) 延遲
+        pyautogui.moveTo(x + off[0], y + off[1], duration=d)  # 3) 固定偏移位置
+        time.sleep(0.02)
+        press_click("left", hold)     #    按左鍵
+        print(f"F9：右鍵({x},{y}) → 等{delay}s → 左鍵({x + off[0]},{y + off[1]})")
+    except pyautogui.FailSafeException:
+        print("F9：偵測到滑鼠到左上角，已中止。")
+
+
+def on_f9(cfg):
+    if not preclick_offset(cfg):
+        threading.Thread(target=record_preclick, args=(cfg,), daemon=True).start()
+        return
+    threading.Thread(target=preclick_once, args=(cfg,), daemon=True).start()
+
+
+def on_reset_f9(cfg):
+    threading.Thread(target=record_preclick, args=(cfg,), daemon=True).start()
 
 
 # ---------- F6：在固定位置連點右鍵（開關；Shift+F6 設定位置）----------
@@ -1196,6 +1264,8 @@ def hotkey_loop(cfg, dry_run, debug):
     keyboard.add_hotkey("shift+f6", lambda: on_reset_f6(cfg))
     keyboard.add_hotkey("f7", lambda: on_f7(cfg))
     keyboard.add_hotkey("f8", lambda: on_f8(cfg))
+    keyboard.add_hotkey("f9", lambda: on_f9(cfg))
+    keyboard.add_hotkey("shift+f9", lambda: on_reset_f9(cfg))
     two_set = bool(two_click_cfg(cfg).get("pos_a"))
     f6_set = bool(f6_pos(cfg))
     print("=" * 52)
@@ -1213,6 +1283,9 @@ def hotkey_loop(cfg, dry_run, debug):
           + ("" if f7_ready(cfg) else "（尚未設定：python trade_bot.py --setup-f7）"))
     print("    F8 = 提起交易端 開／關（只按準備→等對方橘燈→按確認；自己發起交易的人用）"
           + ("" if f8_ready(cfg) else "（尚未設定：python trade_bot.py --setup-f7）"))
+    print("    F9 = 前置點：目前位置按右鍵→等0.3s→固定偏移位置按左鍵（按一次做一次）"
+          + ("" if preclick_offset(cfg) else "（第一次按會先請你設定兩個位置）"))
+    print("    Shift+F9 = 重新設定 F9 的兩個位置")
     print("    （滑鼠甩到螢幕左上角 = 緊急停止；要結束程式關掉視窗或 Ctrl+C）")
     print("=" * 52)
     try:
