@@ -1099,11 +1099,22 @@ def on_reset_f8_preclick(cfg):
 
 
 def f8_do_one(cfg):
-    """提起交易端一筆：前置點 → 按準備 → 等對方橘燈 → 按確認。回傳文字結果。"""
+    """提起交易端一筆：前置點 → 檢查交易視窗有沒有開（沒開就回傳、由外層重來前置）
+    → 按準備 → 等對方橘燈 → 按確認。回傳文字結果。"""
     f7 = cfg["f7"]
     retries = int(f7.get("click_retries", 3))
-    # 0) 前置點（右鍵→延遲→左鍵）
+    # 0) 前置點（右鍵→延遲→左鍵）——這步就是去開啟交易
     f8_preclick(cfg)
+    # 0.5) 前置後，等一下看『交易視窗有沒有開』；沒開就回傳，讓外層重來前置
+    opened = False
+    wend = time.time() + float(f7.get("window_wait", 2.5))
+    while time.time() < wend and f8_active.is_set() and not exit_event.is_set():
+        if f7_trade_window_open(cfg) is not False:  # True 或 None(沒樣板) 都當作開
+            opened = True
+            break
+        time.sleep(0.2)
+    if not opened:
+        return "沒開視窗"
     # 1) 按準備交易（確認按到：準備鈕亮橘燈）
     print("F8：交易視窗開 → 按準備交易")
     if not f7_press_until_orange(
@@ -1145,27 +1156,29 @@ def f8_do_one(cfg):
 
 
 def f8_watch(cfg):
-    print("F8：提起交易端待命中（偵測到交易視窗就 前置點→按準備→等對方橘燈→按確認）。再按 F8 停止。")
+    print("F8：提起交易端待命中（做前置點→交易視窗有開就交易，沒開就重來前置）。再按 F8 停止。")
+    f7 = cfg.get("f7", {})
     while f8_active.is_set() and not exit_event.is_set():
+        if not busy_lock.acquire(blocking=False):
+            time.sleep(0.5)
+            continue
         try:
-            # 只在偵測到『交易視窗開著（準備鈕在、還沒被按亮）』時才動作；
-            # 按下準備後準備鈕會變亮、這裡就不會重複觸發，等視窗關掉、下一筆重開才再跑。
-            if f7_trade_window_open(cfg) is True:
-                if not busy_lock.acquire(blocking=False):
-                    time.sleep(0.5)
-                    continue
-                try:
-                    result = f8_do_one(cfg)
-                    print(f"F8：本筆結果 = {result}。繼續待命…")
-                except pyautogui.FailSafeException:
-                    print("F8：滑鼠到左上角，中止本筆。")
-                finally:
-                    stop_event.clear()
-                    busy_lock.release()
-                time.sleep(cfg.get("f7", {}).get("cooldown", 2.0))
+            result = f8_do_one(cfg)
+            if result == "沒開視窗":
+                print("F8：前置後沒偵測到交易視窗，重來前置…")
+            else:
+                print(f"F8：本筆結果 = {result}。")
         except pyautogui.FailSafeException:
-            time.sleep(1.0)
-        time.sleep(cfg.get("f7", {}).get("poll", 0.4))
+            print("F8：滑鼠到左上角，中止本筆。")
+            result = "中止"
+        finally:
+            stop_event.clear()
+            busy_lock.release()
+        # 完成一筆就多等一下(cooldown)；只是重來前置就短暫間隔
+        if result == "完成":
+            time.sleep(f7.get("cooldown", 2.0))
+        else:
+            time.sleep(f7.get("f8_retry_gap", 0.6))
 
 
 def on_f8(cfg):
@@ -1253,7 +1266,7 @@ def setup_trade_points(cfg, include_accept=True):
                  "after_accept": 1.0, "after_prepare": 0.5, "after_confirm": 1.0,
                  "cooldown": 2.0, "poll": 0.4, "orange_w": 26, "orange_h": 26,
                  "click_retries": 3, "after_grab": 0.6,
-                 "preclick_delay": 0.3, "preclick_use_cursor": False,
+                 "preclick_delay": 0.3, "preclick_use_cursor": False, "f8_retry_gap": 0.6,
                  "accept_gone_wait": 3.0, "accept_gone_reads": 3,
                  "btn_orange_ratio": 0.15, "btn_orange_w": 44, "btn_orange_h": 44,
                  "orange_wait": 2.5, "orange_hmin": 8, "orange_hmax": 25,
