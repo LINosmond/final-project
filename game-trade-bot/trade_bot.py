@@ -1126,7 +1126,7 @@ def on_f8(cfg):
         return
     if not f8_ready(cfg):
         print("F8：還沒設定好（需要準備鈕、確認鈕、對方橘燈位置＋準備鈕樣板）。"
-              "請先跑『calibrate.bat』一併設定交易點位（或 python trade_bot.py --setup-f7）。")
+              "請先跑『校正.bat』一併設定交易點位（或 python trade_bot.py --setup-f7）。")
         return
     f8_active.set()
     threading.Thread(target=f8_watch, args=(cfg,), daemon=True).start()
@@ -1245,7 +1245,7 @@ def hotkey_loop(cfg, dry_run, debug):
     print("    F7 = 自動交易 開／關（偵測有人要求交易→接受→放滿8格→準備→橘燈亮→確認）"
           + ("" if f7_ready(cfg) else "（尚未設定：python trade_bot.py --setup-f7）"))
     print("    F8 = 提起交易端 開／關（前置點右鍵→左鍵 → 按準備 → 等對方橘燈 → 按確認）"
-          + ("" if f8_ready(cfg) else "（尚未設定：跑 calibrate.bat 一併設定交易點位）"))
+          + ("" if f8_ready(cfg) else "（尚未設定：跑 校正.bat 一併設定交易點位）"))
     print("    （滑鼠甩到螢幕左上角 = 緊急停止；要結束程式關掉視窗或 Ctrl+C）")
     print("=" * 52)
     try:
