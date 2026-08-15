@@ -289,7 +289,7 @@ def main():
         print("  —— 交易點位（F7 收交易 / F8 提交易）——")
         print(f"   [3] 交易請求（接受鈕，F7 收交易；需有交易邀請視窗）   {mark(f7.get('accept_btn'))}")
         print(f"   [4] 前置點（F8 右鍵→左鍵）                          {mark(f7.get('preclick_rpos'))}")
-        print(f"   [5] 準備交易鈕                                      {mark(f7.get('prepare_btn'))}")
+        print(f"   [5] 準備交易鈕 + 準備橘燈位置                        {mark(f7.get('prepare_btn'))}")
         print(f"   [6] 確認鈕                                          {mark(f7.get('confirm_btn'))}")
         print(f"   [7] 對方橘燈                                        {mark(f7.get('orange_pos'))}")
         print("   [8] 交易點位 全部（3~7 一次做完）")

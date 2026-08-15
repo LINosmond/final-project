@@ -871,17 +871,18 @@ def f7_wait_orange(sct, cfg, center, seconds, also_closed=False):
     return False
 
 
-def f7_press_until_orange(cfg, center, wait_s, retries, label, also_closed=False):
-    """按一個按鈕，並用『按鈕上亮橘燈』確認真的按到。
-    按下後在一段時間窗內持續盯著看（不是只看一次），這段時間內亮了就成功；
-    整段都沒亮才再按一次（最多 retries 次）。已亮就不再按，避免把準備狀態按掉。
+def f7_press_until_orange(cfg, center, wait_s, retries, label, also_closed=False, orange_pos=None):
+    """按 center 這個位置的鈕，並用『橘燈亮起』確認真的按到。
+    橘燈檢查的位置：有給 orange_pos 就看那裡（例如「準備好」的橘色橫條），
+    沒給就看按鈕本身。按下後在時間窗內持續盯著看，亮了就成功；整段沒亮才再按一次。
     also_closed=True（確認鈕）時，交易視窗關閉（格子清空）也算成功。回傳 True=已按到。"""
     f7 = cfg["f7"]
     ratio = f7.get("btn_orange_ratio", 0.15)
+    check = orange_pos if orange_pos else center
     orange_wait = max(float(wait_s), float(f7.get("orange_wait", 2.5)))
     with mss.mss() as sct:
         # 一開始就亮 = 已按下（例如上一輪已按），不要再按
-        if f7_orange_at(sct, cfg, center) >= ratio:
+        if f7_orange_at(sct, cfg, check) >= ratio:
             return True
         if also_closed and _filled_slots_in(grab_screen(sct), cfg) == 0:
             return True
@@ -890,11 +891,11 @@ def f7_press_until_orange(cfg, center, wait_s, retries, label, also_closed=False
                 print(f"F7：{label} 這段時間都沒偵測到橘燈，再按一次（第 {attempt} 次）…")
             click(center[0], center[1], cfg)
             # 按下後在時間窗內輪詢等橘燈亮，避免剛好那一瞬間還沒亮就誤判
-            if f7_wait_orange(sct, cfg, center, orange_wait, also_closed=also_closed):
+            if f7_wait_orange(sct, cfg, check, orange_wait, also_closed=also_closed):
                 return True
             if stop_event.is_set() or exit_event.is_set():
                 return False
-        return f7_orange_at(sct, cfg, center) >= ratio
+        return f7_orange_at(sct, cfg, check) >= ratio
 
 
 def f7_confirm_until_opp_gone(cfg):
@@ -978,10 +979,11 @@ def f7_do_one_trade(cfg):
     #    真的都偵測不到也照樣往下走（多半其實已按下，只是橘燈沒抓到）。
     print(f"F7：按準備交易（放上 {filled}/8）")
     if not f7_press_until_orange(
-        cfg, f7["prepare_btn"], f7.get("after_prepare", 0.5), retries, "準備交易"
+        cfg, f7["prepare_btn"], f7.get("after_prepare", 0.5), retries, "準備交易",
+        orange_pos=f7.get("prepare_orange_pos")
     ):
-        print("F7：準備鈕橘燈沒偵測到，仍照樣往下等對方。"
-              "（若常這樣：跑 python trade_bot.py --test-f7 看『準備橘燈』數值調 btn_orange_ratio）")
+        print("F7：準備橘燈沒偵測到，仍照樣往下等對方。"
+              "（可在校正選單 [5] 指定『準備好會亮的橘燈位置』，或跑 --test-f7 調門檻）")
     # 步驟間取球
     f6_grab_once(cfg)
     # 5) 等橘燈亮（對方也準備好）
@@ -1174,9 +1176,10 @@ def f8_do_one(cfg):
     #    真的偵測不到也照樣往下等對方橘燈。
     print("F8：交易視窗開 → 按準備交易")
     if not f7_press_until_orange(
-        cfg, f7["prepare_btn"], f7.get("after_prepare", 0.5), retries, "準備交易"
+        cfg, f7["prepare_btn"], f7.get("after_prepare", 0.5), retries, "準備交易",
+        orange_pos=f7.get("prepare_orange_pos")
     ):
-        print("F8：準備鈕橘燈沒偵測到，仍照樣往下等對方。")
+        print("F8：準備橘燈沒偵測到，仍照樣往下等對方。")
     # 2) 等對方橘燈亮
     thr = f7.get("orange_ratio", 0.25)
     timeout = f7.get("orange_timeout", 10)
@@ -1300,17 +1303,19 @@ def setup_trade_points(cfg, include_accept=True):
             print("  （接受後把交易視窗打開，看得到準備/確認鈕，再繼續下面步驟）\n")
 
     print("以下是交易視窗裡的點位（把交易視窗打開再指）：")
-    pre_r = _capture_pos("(1/5) 前置『右鍵』要點的位置（通常是角色/交易對象上），按 Enter：")
-    pre_l = _capture_pos("(2/5) 前置『左鍵』要點的位置（右鍵後選單「交易」選項的位置），按 Enter：")
-    prepare = _capture_pos("(3/5) 『準備交易』鈕 的位置，按 Enter：")
+    pre_r = _capture_pos("(1/6) 前置『右鍵』要點的位置（通常是角色/交易對象上），按 Enter：")
+    pre_l = _capture_pos("(2/6) 前置『左鍵』要點的位置（右鍵後選單「交易」選項的位置），按 Enter：")
+    prepare = _capture_pos("(3/6) 『準備交易』鈕 的位置，按 Enter：")
     _capture_button_template(prepare, f7.get("prepare_w", 90), f7.get("prepare_h", 44),
                              F7_PREPARE_REF, "準備鈕（判斷交易視窗在不在）")
-    confirm = _capture_pos("(4/5) 『確認（完成交易）』鈕 的位置，按 Enter：")
-    orange = _capture_pos("(5/5) 『對方橘燈』的位置（對方準備好會亮的燈），按 Enter：")
+    prep_orange = _capture_pos("(4/6) 按下準備後會亮的『橘燈/橘色橫條』位置（指中央，沒亮也沒關係），按 Enter：")
+    confirm = _capture_pos("(5/6) 『確認（完成交易）』鈕 的位置，按 Enter：")
+    orange = _capture_pos("(6/6) 『對方橘燈』的位置（對方準備好會亮的燈），按 Enter：")
 
     f7.update({"preclick_rpos": pre_r, "preclick_lpos": pre_l,
                "preclick_loff": [pre_l[0] - pre_r[0], pre_l[1] - pre_r[1]],
-               "prepare_btn": prepare, "confirm_btn": confirm, "orange_pos": orange})
+               "prepare_btn": prepare, "prepare_orange_pos": prep_orange,
+               "confirm_btn": confirm, "orange_pos": orange})
 
     _save_f7(cfg, f7)
     has_accept = bool(f7.get("accept_btn")) and os.path.exists(F7_ACCEPT_REF)
@@ -1374,14 +1379,17 @@ def setup_preclick(cfg):
 
 
 def setup_prepare(cfg):
-    """準備交易鈕（位置 + 樣板，用來判斷交易視窗在不在）。需要交易視窗開著。"""
+    """準備交易鈕（位置 + 樣板 + 按下後會亮的橘燈位置）。需要交易視窗開著。"""
     f7 = cfg.get("f7", {})
     prepare = _capture_pos("『準備交易』鈕 的位置，按 Enter：")
     _capture_button_template(prepare, f7.get("prepare_w", 90), f7.get("prepare_h", 44),
                              F7_PREPARE_REF, "準備鈕（判斷交易視窗在不在）")
     f7["prepare_btn"] = prepare
+    print("按下準備後會亮的『橘燈／橘色橫條』——把滑鼠移到那條橘燈的正中央（沒亮也沒關係，指位置就好）。")
+    po = _capture_pos("『準備好會亮的橘燈』位置，按 Enter：")
+    f7["prepare_orange_pos"] = po
     _save_f7(cfg, f7)
-    print("✅ 準備交易鈕設定完成並存檔。\n")
+    print("✅ 準備交易鈕 + 準備橘燈位置 設定完成並存檔。\n")
 
 
 def setup_confirm(cfg):
@@ -1506,7 +1514,7 @@ def test_f7(cfg):
     print("=" * 56)
     oratio = f7.get("btn_orange_ratio", 0.15)
     othr = f7.get("orange_ratio", 0.25)
-    prep = f7.get("prepare_btn")
+    prep = f7.get("prepare_orange_pos") or f7.get("prepare_btn")  # 準備橘燈看的位置
     conf = f7.get("confirm_btn")
     print("  另外也顯示『準備／確認鈕橘燈』和『對方橘燈』的比例。")
     print(f"  按鈕橘燈門檻 btn_orange_ratio = {oratio}；對方橘燈門檻 orange_ratio = {othr}")
