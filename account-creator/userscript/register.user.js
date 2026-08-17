@@ -26,8 +26,7 @@
 
 const CONFIG = {
   // 註冊頁網址（送出後自動回到這頁抓下一組的新表單）。要和上面 @match 同一區。
-  // ⚠ 下面這個是你給的「登入頁」；若真正的「註冊/加入會員」頁是別的網址，請改成那一頁。
-  registerUrl: "https://www.userjoy.com/MemberAL1G/login/index.aspx?lang=zh-TW",
+  registerUrl: "https://www.userjoy.com/MemberAL1G/Register/step1.aspx",
 
   batchSize: 4, // 一次填幾組
 
