@@ -4,7 +4,7 @@
 // @version      1.0
 // @description  在註冊網頁上自動填「帳號／密碼／信箱」，一次一批（預設 4 組），不佔用滑鼠鍵盤。
 // @author       you
-// @match        https://你的註冊網址/*
+// @match        https://www.userjoy.com/MemberAL1G/*
 // @run-at       document-idle
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -25,8 +25,9 @@
  * ============================================================ */
 
 const CONFIG = {
-  // 註冊頁網址（送出後自動回到這頁抓下一組的新表單）。要和上面 @match 同一頁。
-  registerUrl: "https://你的註冊網址/register",
+  // 註冊頁網址（送出後自動回到這頁抓下一組的新表單）。要和上面 @match 同一區。
+  // ⚠ 下面這個是你給的「登入頁」；若真正的「註冊/加入會員」頁是別的網址，請改成那一頁。
+  registerUrl: "https://www.userjoy.com/MemberAL1G/login/index.aspx?lang=zh-TW",
 
   batchSize: 4, // 一次填幾組
 

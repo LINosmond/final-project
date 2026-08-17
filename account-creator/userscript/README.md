@@ -21,6 +21,18 @@
 5. 把 **`ACCOUNTS`** 那段換成你的帳號資料（格式同 `accounts.txt`）。
 6. 存檔 → 打開註冊頁 → 右下角出現小面板 → 按 **「自動填 4 組」**。
 
+## 一次抓出所有欄位（給選擇器用）
+
+打開目標頁 → F12 → Console 貼這段 → Enter，會列出每個欄位的 id/name/type：
+
+```js
+document.querySelectorAll('input,button,select,textarea').forEach(e=>console.log(
+  e.tagName,'| type='+(e.type||''),'| id='+(e.id||''),'| name='+(e.name||''),
+  '| ph='+(e.placeholder||''),'| txt='+((e.innerText||e.value||'').trim().slice(0,20))));
+```
+
+看哪個是帳號/密碼/信箱/送出鈕，把它的 `id` 或 `name` 填進 `CONFIG.selectors`。
+
 ## 抓不到欄位時
 
 腳本會自動猜常見的帳號／密碼／信箱欄，但有些網站命名特殊。
