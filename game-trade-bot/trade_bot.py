@@ -1319,11 +1319,11 @@ def setup_trade_points(cfg, include_accept=True):
     print("以下是交易視窗裡的點位（把交易視窗打開再指）：")
     pre_r = _capture_pos("(1/6) 前置『右鍵』要點的位置（通常是角色/交易對象上），按 Enter：")
     pre_l = _capture_pos("(2/6) 前置『左鍵』要點的位置（右鍵後選單「交易」選項的位置），按 Enter：")
-    prepare = _capture_pos("(3/6) 『準備交易』鈕 的位置，按 Enter：")
+    prepare = _capture_pos("(3/6) 『準備交易(打勾 ✓ 那顆，不是最右邊)』鈕 的位置，按 Enter：")
     _capture_button_template(prepare, f7.get("prepare_w", 90), f7.get("prepare_h", 44),
                              F7_PREPARE_REF, "準備鈕（判斷交易視窗在不在）")
     prep_orange = _capture_pos("(4/6) 按下準備後會亮的『橘燈/橘色橫條』位置（指中央，沒亮也沒關係），按 Enter：")
-    confirm = _capture_pos("(5/6) 『確認（完成交易）』鈕 的位置，按 Enter：")
+    confirm = _capture_pos("(5/6) 『確認完成交易(最右邊那顆/鐵砧，不是 ✓)』鈕 的位置，按 Enter：")
     orange = _capture_pos("(6/6) 『對方橘燈』的位置（對方準備好會亮的燈），按 Enter：")
 
     f7.update({"preclick_rpos": pre_r, "preclick_lpos": pre_l,
@@ -1395,7 +1395,8 @@ def setup_preclick(cfg):
 def setup_prepare(cfg):
     """準備交易鈕（位置 + 樣板 + 按下後會亮的橘燈位置）。需要交易視窗開著。"""
     f7 = cfg.get("f7", {})
-    prepare = _capture_pos("『準備交易』鈕 的位置，按 Enter：")
+    print("『準備交易』= 打勾 ✓ 那顆（按了會鎖定/準備，我方橘燈會亮）。不是最右邊那顆。")
+    prepare = _capture_pos("『準備交易(✓)』鈕 的位置，按 Enter：")
     _capture_button_template(prepare, f7.get("prepare_w", 90), f7.get("prepare_h", 44),
                              F7_PREPARE_REF, "準備鈕（判斷交易視窗在不在）")
     f7["prepare_btn"] = prepare
@@ -1409,7 +1410,9 @@ def setup_prepare(cfg):
 def setup_confirm(cfg):
     """確認（完成交易）鈕的位置。需要交易視窗開著。"""
     f7 = cfg.get("f7", {})
-    confirm = _capture_pos("『確認（完成交易）』鈕 的位置，按 Enter：")
+    print("『確認完成交易』= 最右邊那顆（鐵砧/最後確認），按了才真的送出交易。")
+    print("  ★不要指到打勾 ✓（那是準備），也不要指到 ✗（取消）。")
+    confirm = _capture_pos("『確認完成交易(最右邊那顆)』鈕 的位置，按 Enter：")
     f7["confirm_btn"] = confirm
     _save_f7(cfg, f7)
     print("✅ 確認鈕設定完成並存檔。\n")
