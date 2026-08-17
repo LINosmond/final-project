@@ -938,6 +938,7 @@ def _receive_do_one(cfg, det, active, tag):
         if not f7_accept_verified(cfg):
             print(f"{tag}：接受一直沒點到（或被中止），取消這筆。")
             return "接受失敗"
+        print(f"{tag}：接受後等交易視窗開啟…")
         win = None
         wend = time.time() + float(f7.get("window_wait", 2.5))
         while time.time() < wend and not exit_event.is_set():
@@ -960,16 +961,21 @@ def _receive_do_one(cfg, det, active, tag):
     print(f"{tag}：放物…")
     stop_event.clear()
     run_sequence(cfg, count=8, det=det)
-    # 3) 放完後最多等 fill_settle 秒補到 8；不論最後幾顆，時間到照樣往下。
+    # 3) 放完後最多等 fill_settle 秒補到 8；但只要數字『不再增加』(放完了)就提早往下，
+    #    不會每次都傻等滿 5 秒（尤其偵測略少算時）。
     settle = float(f7.get("fill_settle", 5.0))
+    stable_need = float(f7.get("fill_stable", 1.5))
     end = time.time() + settle
     filled = f7_filled_slots(cfg, det)
+    prev, stable_since = filled, time.time()
     while filled < 8 and time.time() < end and active.is_set() and not exit_event.is_set():
-        time.sleep(0.5)
+        time.sleep(0.4)
         filled = f7_filled_slots(cfg, det)
-    print(f"{tag}：交易格目前 {filled}/8（等了最多 {settle:.0f}s），不論如何往下走。")
-    # 步驟間取球
-    f6_grab_once(cfg)
+        if filled != prev:
+            prev, stable_since = filled, time.time()
+        elif time.time() - stable_since >= stable_need:
+            break  # 數字穩定不動 = 放完了，不用再等
+    print(f"{tag}：交易格 {filled}/8，往下走。")
     # 3.5) 真的有交易視窗才按準備
     if f7_trade_window_open(cfg) is False:
         print(f"{tag}：沒偵測到交易視窗（準備鈕不在畫面上），不按準備，取消這筆。")
@@ -981,8 +987,6 @@ def _receive_do_one(cfg, det, active, tag):
         orange_pos=f7.get("prepare_orange_pos")
     ):
         print(f"{tag}：準備橘燈沒偵測到，仍照樣往下等對方。")
-    # 步驟間取球
-    f6_grab_once(cfg)
     # 5) 等橘燈亮（對方也準備好）
     thr = f7.get("orange_ratio", 0.25)
     print(f"{tag}：等對方準備（橘燈）…（門檻橘色比例 {thr}）")
@@ -1356,7 +1360,7 @@ def _ensure_f7_defaults(f7):
                  "btn_orange_ratio": 0.15, "btn_orange_w": 44, "btn_orange_h": 44,
                  "orange_wait": 2.5, "confirm_wait": 2.5, "orange_hmin": 8, "orange_hmax": 25,
                  "prepare_score": 0.70, "prepare_search_w": 160, "prepare_search_h": 120,
-                 "fill_settle": 5.0, "end_grabs": 3, "open_retries": 2, "reopen_wait": 1.2,
+                 "fill_settle": 5.0, "fill_stable": 1.5, "end_grabs": 3, "open_retries": 2, "reopen_wait": 1.2,
                  "window_wait": 2.5}.items():
         f7.setdefault(k, v)
     return f7
