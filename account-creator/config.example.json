@@ -1,0 +1,27 @@
+{
+  "_說明": "這是範例。實際請跑 python calibrate.py 產生你自己的 config.json，座標才會準。下面的座標只是示意，不會剛好對應你的螢幕。",
+  "fields": {
+    "_說明": "各欄位在畫面上的座標 [x, y]；null 代表沒有這一欄，會自動略過。",
+    "account": [760, 300],
+    "password": [760, 360],
+    "email": [760, 420],
+    "mailbox_password": null,
+    "submit": [760, 500]
+  },
+  "options": {
+    "batch_size": 4,
+    "fill_mailbox_password": false,
+    "press_enter_to_submit": false,
+    "clear_before_type": true,
+    "use_clipboard_paste": true
+  },
+  "timing": {
+    "start_countdown": 3,
+    "move_duration": 0.2,
+    "click_delay": 0.25,
+    "type_interval": 0.02,
+    "after_field": 0.15,
+    "after_submit": 1.5,
+    "between_accounts": 1.0
+  }
+}

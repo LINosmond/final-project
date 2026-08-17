@@ -1,0 +1,7 @@
+# 個人資料與現場產生的檔案不進版控
+config.json
+accounts.txt
+progress.json
+帳號.txt
+__pycache__/
+*.pyc

@@ -1,0 +1,22 @@
+# 帳號資料檔（示意）。實際請把這份另存成 accounts.txt 再填你自己的資料。
+#
+# 規則：
+#   1) 每行一組，欄位用「Tab 或多個空白」分開。
+#   2) 第一行若是標題（含「帳號」字樣）會自動略過。
+#   3) 以 # 開頭的行、空白行都會略過。
+#   4) 欄位順序：帳號  密碼  邮箱  API链接
+#      —— API链接 可留空；程式會自動從連結尾端 ----xxxx 解析出「信箱密碼」，
+#         若你的註冊表單需要填信箱密碼，可在 config.json 開啟（見 README）。
+#
+帳號	密碼	邮箱	API链接
+qqsd01	11111111	agwa6461@outlook.com	http://query.paopaodw.com/boobar?email=agwa6461@outlook.com----ukem7855
+qqsd02	11111111	ztfk6673@outlook.com	http://query.paopaodw.com/boobar?email=ztfk6673@outlook.com----ctcf2759
+qqsd03	11111111	eimt6162@outlook.com	http://query.paopaodw.com/boobar?email=eimt6162@outlook.com----yhfp2349
+qqsd04	11111111	ltkl8581@outlook.com	http://query.paopaodw.com/boobar?email=ltkl8581@outlook.com----mdku9662
+qqsd05	11111111	ztvm8735@outlook.com	http://query.paopaodw.com/boobar?email=ztvm8735@outlook.com----cbvk4327
+qqsd06	11111111	oieb8353@outlook.com	http://query.paopaodw.com/boobar?email=oieb8353@outlook.com----rphl8315
+qqsd07	11111111	capb3156@outlook.com	http://query.paopaodw.com/boobar?email=capb3156@outlook.com----fmjc1646
+qqsd08	11111111	vfwq4499@outlook.com	http://query.paopaodw.com/boobar?email=vfwq4499@outlook.com----vupx4896
+qqsd09	11111111	btzp9835@outlook.com	http://query.paopaodw.com/boobar?email=btzp9835@outlook.com----fuuk6489
+qqsd10	11111111	eklu3721@outlook.com	http://query.paopaodw.com/boobar?email=eklu3721@outlook.com----yelf5439
+qqsd11	11111111	knyd4881@outlook.com	http://query.paopaodw.com/boobar?email=knyd4881@outlook.com----oubq7873
