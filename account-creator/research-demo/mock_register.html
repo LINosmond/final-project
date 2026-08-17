@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模擬註冊頁（研究靶機）</title>
+<style>
+  :root{
+    --bg:#f4f6fb; --card:#ffffff; --ink:#1f2430; --muted:#5b6472;
+    --line:#e3e7ef; --accent:#3b6df6; --ok:#1a9d63; --bad:#d1453b; --warn:#c07a12;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#151922; --card:#1e242f; --ink:#e6e9f0; --muted:#9aa4b4;
+           --line:#2c3444; --accent:#5b86ff; --ok:#38c98a; --bad:#f2695f; --warn:#e0a53c; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.6 system-ui,-apple-system,"Noto Sans TC",sans-serif;padding:24px}
+  .wrap{max-width:960px;margin:0 auto;display:grid;gap:20px;grid-template-columns:1fr 1fr}
+  @media (max-width:780px){.wrap{grid-template-columns:1fr}}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px}
+  label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
+  input[type=text],input[type=password],input[type=email]{
+    width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;
+    background:transparent;color:var(--ink);font-size:15px}
+  input:focus{outline:2px solid var(--accent);outline-offset:1px}
+  .robot{display:flex;align-items:center;gap:8px;margin:14px 0;padding:10px;
+    border:1px solid var(--line);border-radius:8px}
+  .robot input{width:18px;height:18px}
+  button{font:inherit;border:0;border-radius:8px;padding:9px 14px;cursor:pointer}
+  .primary{background:var(--accent);color:#fff}
+  .ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .msg{min-height:20px;margin-top:10px;font-size:13px}
+  .msg.ok{color:var(--ok)} .msg.bad{color:var(--bad)}
+  table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+  th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
+  th{color:var(--muted);font-weight:600}
+  .tag{display:inline-block;padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600}
+  .tag.bot{background:color-mix(in srgb,var(--bad) 18%,transparent);color:var(--bad)}
+  .tag.human{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+  .scroll{max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+  code{background:color-mix(in srgb,var(--muted) 16%,transparent);padding:1px 5px;border-radius:4px}
+  .hint{font-size:12px;color:var(--muted);margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ============ 左：模擬註冊表單 ============ -->
+  <div class="card">
+    <h1>會員註冊（模擬）</h1>
+    <p class="sub">這是本機研究靶機，不連任何外部服務。填寫後的資料只留在你瀏覽器裡。</p>
+
+    <form id="regForm" autocomplete="off">
+      <label for="account">帳號</label>
+      <input type="text" id="account" name="account" required>
+
+      <label for="password">密碼</label>
+      <input type="password" id="password" name="password" required>
+
+      <label for="email">信箱</label>
+      <input type="email" id="email" name="email" required>
+
+      <div class="robot">
+        <input type="checkbox" id="notRobot">
+        <label for="notRobot" style="margin:0;color:var(--ink)">我不是機器人</label>
+      </div>
+
+      <div class="row">
+        <button type="submit" class="primary">註冊</button>
+        <button type="button" class="ghost" id="btnBotFill">模擬自動填入（bot）</button>
+        <button type="button" class="ghost" id="btnClearForm">清空欄位</button>
+      </div>
+      <div class="msg" id="msg"></div>
+    </form>
+
+    <p class="hint">「模擬自動填入」用程式直接塞值（等同外掛/腳本的做法）；
+      手動打字則是逐鍵輸入。兩者的行為特徵會被右側儀表記錄下來。</p>
+  </div>
+
+  <!-- ============ 右：自動化偵測儀表 ============ -->
+  <div class="card">
+    <h1>自動化偵測儀表</h1>
+    <p class="sub">記錄每次送出的行為特徵，判斷像「人手輸入」還是「程式填入」。可匯出 CSV 做分析。</p>
+
+    <div class="row" style="margin-top:0">
+      <button type="button" class="ghost" id="btnExport">匯出 CSV</button>
+      <button type="button" class="ghost" id="btnClearLog">清除紀錄</button>
+      <span class="msg" id="stat" style="align-self:center"></span>
+    </div>
+
+    <div class="scroll">
+      <table id="logTable">
+        <thead><tr>
+          <th>#</th><th>帳號</th><th>判定</th><th>分數</th>
+          <th>擊鍵</th><th>貼上</th><th>填字耗時</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <p class="hint">判定依據（可在原始碼調整權重）：欄位有無 keydown 事件、是否用貼上、
+      從聚焦到填完的耗時、以及值是否在「沒有任何輸入事件」下突然出現。</p>
+  </div>
+
+</div>
+
+<script>
+/* =========================================================================
+ *  研究靶機：模擬註冊 + 自動化偵測
+ *  —— 所有資料只存在本機 localStorage，不外傳。
+ * ========================================================================= */
+
+const FIELDS = ["account","password","email"];
+
+// 每個欄位的行為紀錄；每次「清空/送出」後重置
+function blankSignals(){
+  const s = {};
+  for(const f of FIELDS) s[f] = {keys:0, pastes:0, inputs:0, focusAt:0, filledAt:0, hadValueNoInput:false};
+  return s;
+}
+let sig = blankSignals();
+
+// 綁定各欄位的事件監聽，累積行為特徵
+for(const f of FIELDS){
+  const el = document.getElementById(f);
+  el.addEventListener("focus", ()=>{ if(!sig[f].focusAt) sig[f].focusAt = performance.now(); });
+  el.addEventListener("keydown", ()=>{ sig[f].keys++; });
+  el.addEventListener("paste",  ()=>{ sig[f].pastes++; });
+  el.addEventListener("input",  ()=>{
+    sig[f].inputs++;
+    sig[f].filledAt = performance.now();
+    // 有值、但完全沒有 keydown 也沒有 paste → 典型的程式塞值
+    if(el.value && sig[f].keys===0 && sig[f].pastes===0) sig[f].hadValueNoInput = true;
+  });
+}
+
+// ---- 判定：由行為特徵算出 bot 分數（0~100，越高越像機器人）----
+function scoreBot(){
+  let score = 0, totalKeys = 0, totalPaste = 0, minFill = Infinity;
+  for(const f of FIELDS){
+    const s = sig[f];
+    totalKeys += s.keys; totalPaste += s.pastes;
+    if(s.hadValueNoInput) score += 30;                 // 值憑空出現
+    if(s.keys===0 && document.getElementById(f).value) score += 10; // 有值卻沒擊鍵
+    const dur = (s.focusAt && s.filledAt) ? s.filledAt - s.focusAt : Infinity;
+    if(dur < 30) score += 8;                            // 聚焦到填完 < 30ms，人手做不到
+    minFill = Math.min(minFill, dur);
+  }
+  if(totalKeys===0) score += 20;                        // 整張表單零擊鍵
+  score = Math.min(100, score);
+  return {score, totalKeys, totalPaste, minFill: isFinite(minFill)?Math.round(minFill):"-"};
+}
+
+// ---- 送出：驗證 + 記錄一筆 ----
+document.getElementById("regForm").addEventListener("submit", (e)=>{
+  e.preventDefault();
+  const msg = document.getElementById("msg");
+  const account = document.getElementById("account").value.trim();
+  const filledAll = FIELDS.every(f=>document.getElementById(f).value.trim());
+  if(!filledAll){ msg.className="msg bad"; msg.textContent="請把三個欄位都填好。"; return; }
+  if(!document.getElementById("notRobot").checked){
+    msg.className="msg bad"; msg.textContent="請勾選『我不是機器人』。"; return;
+  }
+
+  const r = scoreBot();
+  const verdict = r.score >= 40 ? "bot" : "human";
+  const rec = {
+    t: new Date().toISOString(), account,
+    verdict, score: r.score, keys: r.totalKeys, pastes: r.totalPaste, minFillMs: r.minFill,
+  };
+  const log = JSON.parse(localStorage.getItem("uj_demo_log")||"[]");
+  log.push(rec); localStorage.setItem("uj_demo_log", JSON.stringify(log));
+
+  msg.className="msg ok";
+  msg.textContent = `已送出（模擬）：${account}　→ 判定 ${verdict}（分數 ${r.score}）`;
+  renderLog();
+  resetForm(false);
+});
+
+// ---- 模擬自動填入（等同腳本/外掛的程式塞值）----
+function setNativeValue(el, value){
+  const proto = el.tagName==="TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto,"value").set.call(el, value);
+  el.dispatchEvent(new Event("input",{bubbles:true}));
+  el.dispatchEvent(new Event("change",{bubbles:true}));
+}
+let botSeq = 1;
+document.getElementById("btnBotFill").addEventListener("click", ()=>{
+  sig = blankSignals();
+  const n = String(botSeq++).padStart(2,"0");
+  setNativeValue(document.getElementById("account"),  "testuser"+n);
+  setNativeValue(document.getElementById("password"), "11111111");
+  setNativeValue(document.getElementById("email"),    "testuser"+n+"@example.com");
+  document.getElementById("msg").className="msg";
+  document.getElementById("msg").textContent="已用程式填入（記得勾『我不是機器人』再按註冊，看它會不會被判成 bot）。";
+});
+
+// ---- 清空/重置 ----
+function resetForm(clearRobot=true){
+  document.getElementById("regForm").reset();
+  if(!clearRobot) document.getElementById("notRobot").checked=false;
+  sig = blankSignals();
+}
+document.getElementById("btnClearForm").addEventListener("click", ()=>resetForm());
+
+// ---- 紀錄表渲染 / 匯出 / 清除 ----
+function renderLog(){
+  const log = JSON.parse(localStorage.getItem("uj_demo_log")||"[]");
+  const tb = document.querySelector("#logTable tbody");
+  tb.innerHTML = log.map((r,i)=>`<tr>
+    <td>${i+1}</td><td>${escapeHtml(r.account)}</td>
+    <td><span class="tag ${r.verdict}">${r.verdict}</span></td>
+    <td>${r.score}</td><td>${r.keys}</td><td>${r.pastes}</td><td>${r.minFillMs}</td>
+  </tr>`).join("");
+  const bots = log.filter(r=>r.verdict==="bot").length;
+  document.getElementById("stat").textContent = `共 ${log.length} 筆，判為 bot ${bots} 筆`;
+}
+function escapeHtml(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+
+document.getElementById("btnExport").addEventListener("click", ()=>{
+  const log = JSON.parse(localStorage.getItem("uj_demo_log")||"[]");
+  const head = "time,account,verdict,score,keys,pastes,minFillMs";
+  const rows = log.map(r=>[r.t,r.account,r.verdict,r.score,r.keys,r.pastes,r.minFillMs].join(","));
+  const blob = new Blob([head+"\n"+rows.join("\n")], {type:"text/csv"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "detect_log.csv"; a.click();
+});
+document.getElementById("btnClearLog").addEventListener("click", ()=>{
+  if(confirm("確定清除所有偵測紀錄？")){ localStorage.removeItem("uj_demo_log"); renderLog(); }
+});
+
+renderLog();
+</script>
+</body>
+</html>
