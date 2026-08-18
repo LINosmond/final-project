@@ -796,10 +796,10 @@ def f6_grab_once(cfg):
     sleep_interruptible(cfg.get("f7", {}).get("after_grab", 0.6))
 
 
-def f7_accept_verified(cfg):
+def f7_accept_verified(cfg, first_center=None):
     """按『接受』並確認真的點到：按下後持續盯著看，直到『對方的要求交易彈窗消失』
     才算接受成功、往下一步走；整段時間都還在就再按一次（最多 click_retries 次）。
-    點的是『當下偵測到的接受鈕位置』（彈窗會浮動），偵測不到才退回記住的位置。
+    first_center：watch 剛偵測到的接受鈕位置——第一次直接點它，不再重抓，接受最快。
     回傳 True=已接受（彈窗已消失）。"""
     f7 = cfg["f7"]
     thresh = f7.get("accept_score", 0.75)
@@ -808,10 +808,13 @@ def f7_accept_verified(cfg):
     need_gone = int(f7.get("accept_gone_reads", 3))  # 要連續幾次讀到「不見」才算真的消失
     with mss.mss() as sct:
         for attempt in range(retries + 1):
-            # 一律先按（進到這裡代表 watch 已確認彈窗出現，不該還沒按就跳過）。
-            # 按當下偵測到的位置；分數太低（沒把握）就退回記住的位置。
-            score, center = f7_accept_match(sct, cfg)
-            tx, ty = center if (center and score >= thresh) else f7["accept_btn"]
+            if attempt == 0 and first_center:
+                # 剛偵測到的位置，馬上點下去（不再重抓，最省時間）
+                tx, ty = first_center
+            else:
+                # 按當下偵測到的位置；分數太低（沒把握）就退回記住的位置。
+                score, center = f7_accept_match(sct, cfg)
+                tx, ty = center if (center and score >= thresh) else f7["accept_btn"]
             if attempt > 0:
                 print(f"F7：接受後彈窗還在，再按一次（第 {attempt} 次）…")
             click(tx, ty, cfg)
@@ -924,9 +927,10 @@ def f7_confirm_until_opp_gone(cfg):
         return f7_orange_ratio(sct, cfg) < thr
 
 
-def _receive_do_one(cfg, det, active, tag):
+def _receive_do_one(cfg, det, active, tag, first_center=None):
     """收交易一筆：接受→放物(用傳入的 det 辨識)→準備→等對方橘燈→確認。回傳文字結果。
-    tag 是印訊息用的前綴（F7=綠球 / F8=粉紅道具）；active 是這個模式的開關旗標。"""
+    tag 是印訊息用的前綴（F7=綠球 / F8=粉紅道具）；active 是這個模式的開關旗標。
+    first_center：watch 剛偵測到的接受鈕位置，第一次直接點它（接受最快）。"""
     f7 = cfg["f7"]
     retries = int(f7.get("click_retries", 3))
 
@@ -935,7 +939,7 @@ def _receive_do_one(cfg, det, active, tag):
     opened = False
     for oa in range(open_retries + 1):
         print(f"{tag}：偵測到交易要求 → 按接受" + (f"（第 {oa} 次重試）" if oa else ""))
-        if not f7_accept_verified(cfg):
+        if not f7_accept_verified(cfg, first_center=first_center if oa == 0 else None):
             print(f"{tag}：接受一直沒點到（或被中止），取消這筆。")
             return "接受失敗"
         print(f"{tag}：接受後等交易視窗開啟…")
@@ -1026,18 +1030,23 @@ def _receive_do_one(cfg, det, active, tag):
 
 
 def _receive_watch(cfg, det, active, tag):
+    f7 = cfg.get("f7", {})
+    thresh = f7.get("accept_score", 0.75)
+    scan_poll = float(f7.get("accept_poll", 0.1))   # 掃描交易請求的間隔（越小反應越快）
     print(f"{tag}：自動收交易待命中，等有人要求交易…（再按一次停止）")
     if not os.path.exists(F7_PREPARE_REF):
         print(f"⚠️ {tag}：沒有『準備鈕』樣板，無法判斷交易視窗有沒有真的開，建議重跑校正的準備鈕那區。")
     with mss.mss() as sct:
         while active.is_set() and not exit_event.is_set():
             try:
-                if f7_trade_request_present(sct, cfg):
+                # 掃到交易請求就記住位置，發現的當下馬上把位置傳下去點接受（不再重抓，最快）
+                score, center = f7_accept_match(sct, cfg)
+                if score >= thresh:
                     if not busy_lock.acquire(blocking=False):
                         time.sleep(0.5)
                         continue
                     try:
-                        result = _receive_do_one(cfg, det, active, tag)
+                        result = _receive_do_one(cfg, det, active, tag, first_center=center)
                         print(f"{tag}：本筆結果 = {result}。繼續待命…")
                     except pyautogui.FailSafeException:
                         print(f"{tag}：滑鼠到左上角，中止本筆。")
@@ -1045,9 +1054,10 @@ def _receive_watch(cfg, det, active, tag):
                         stop_event.clear()
                         busy_lock.release()
                     time.sleep(cfg.get("f7", {}).get("cooldown", 2.0))
+                    continue
             except pyautogui.FailSafeException:
                 time.sleep(1.0)
-            time.sleep(cfg.get("f7", {}).get("poll", 0.4))
+            time.sleep(scan_poll)
     print(f"{tag}：已停止自動收交易待命。")
 
 
@@ -1356,7 +1366,7 @@ def _ensure_f7_defaults(f7):
                  "cooldown": 2.0, "poll": 0.4, "orange_w": 26, "orange_h": 26,
                  "click_retries": 3, "after_grab": 0.6,
                  "preclick_delay": 0.3, "preclick_use_cursor": False, "f8_retry_gap": 0.6,
-                 "accept_gone_wait": 3.0, "accept_gone_reads": 3,
+                 "accept_gone_wait": 3.0, "accept_gone_reads": 3, "accept_poll": 0.1,
                  "btn_orange_ratio": 0.15, "btn_orange_w": 44, "btn_orange_h": 44,
                  "orange_wait": 2.5, "confirm_wait": 2.5, "orange_hmin": 8, "orange_hmax": 25,
                  "prepare_score": 0.70, "prepare_search_w": 160, "prepare_search_h": 120,
