@@ -991,6 +991,8 @@ def _receive_do_one(cfg, det, active, tag, first_center=None):
         orange_pos=f7.get("prepare_orange_pos")
     ):
         print(f"{tag}：準備橘燈沒偵測到，仍照樣往下等對方。")
+    # 按完準備再取一次球（趁等對方的空檔補貨）
+    f6_grab_once(cfg)
     # 5) 等橘燈亮（對方也準備好）
     thr = f7.get("orange_ratio", 0.25)
     print(f"{tag}：等對方準備（橘燈）…（門檻橘色比例 {thr}）")
