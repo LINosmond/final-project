@@ -1188,18 +1188,36 @@ def on_reset_f9_preclick(cfg):
     threading.Thread(target=record_preclick_points, args=(cfg,), daemon=True).start()
 
 
+def f9_trade_open(cfg):
+    """交易視窗是不是開著（給 F9 判斷要不要再做前置去開交易）。
+    只要下面任一成立就算『開著』，就不再前置：
+      - 準備鈕圖案偵測到交易視窗（還沒按準備時最準）
+      - 對方橘燈亮（對方在交易中）
+      - 我方準備橘燈亮（我已按過準備，交易進行中）"""
+    if f7_trade_window_open(cfg) is True:
+        return True
+    f7 = cfg.get("f7", {})
+    with mss.mss() as sct:
+        if f7_orange_ratio(sct, cfg) >= f7.get("orange_ratio", 0.25):
+            return True
+        po = f7.get("prepare_orange_pos")
+        if po and f7_orange_at(sct, cfg, po) >= f7.get("btn_orange_ratio", 0.15):
+            return True
+    return False
+
+
 def f9_do_one(cfg):
     """提起交易端一筆：前置點 → 檢查交易視窗有沒有開（沒開就回傳、由外層重來前置）
     → 按準備 → 等對方橘燈 → 按確認。回傳文字結果。"""
     f7 = cfg["f7"]
     retries = int(f7.get("click_retries", 3))
-    # 0) 只有『沒看到交易視窗』時才做前置點去開交易；已有交易視窗就直接進入交易。
-    if f7_trade_window_open(cfg) is False:
+    # 0) 只有『交易視窗沒開著』時才做前置點去開交易；已開著(含對方/我方橘燈亮)就直接進入交易。
+    if not f9_trade_open(cfg):
         f9_preclick(cfg)
         opened = False
         wend = time.time() + float(f7.get("window_wait", 2.5))
         while time.time() < wend and f9_active.is_set() and not exit_event.is_set():
-            if f7_trade_window_open(cfg) is not False:
+            if f9_trade_open(cfg):
                 opened = True
                 break
             time.sleep(0.2)
@@ -1222,9 +1240,6 @@ def f9_do_one(cfg):
         while waited < timeout and f9_active.is_set() and not exit_event.is_set():
             if f7_orange_ratio(sct, cfg) >= thr:
                 break
-            if _filled_slots_in(grab_screen(sct), cfg) == 0 and waited > 1.0:
-                print("F9：交易格清空（視窗關閉／被取消），放棄這筆。")
-                return "交易已關閉"
             if waited - last_print >= 2.0:
                 print(f"F9：等橘燈中…目前 {f7_orange_ratio(sct, cfg):.2f} / 需要 ≥ {thr}（已等 {waited:.0f}s）")
                 last_print = waited
