@@ -1423,14 +1423,18 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
     const att = hoursOf(e);
     const saved = empSal[ym];
     const d = empSal.defaults || {};
+    const pos = saved && saved.position != null ? saved.position : (d.position || "");
+    const chief = pos === "站長"; // 站長＝月薪制：時數 1、時薪＝月薪、無時薪加班
     if (saved) {
       return {
-        position: saved.position != null ? saved.position : (d.position || ""),
-        workHours: saved.workHours != null ? saved.workHours : att.work,
+        position: pos,
+        workHours: saved.workHours != null ? saved.workHours : (chief ? 1 : att.work),
         hourlyRate: saved.hourlyRate != null ? saved.hourlyRate : (d.hourlyRate || 0),
-        otHours: saved.otHours != null ? saved.otHours : att.ot,
+        otHours: saved.otHours != null ? saved.otHours : (chief ? 0 : att.ot),
         otRate: saved.otRate != null ? saved.otRate : (d.otRate || 0),
-        carWash: saved.carWash || 0, dutyAllowance: saved.dutyAllowance || 0, specialBonus: saved.specialBonus || 0,
+        carWash: saved.carWash || 0,
+        dutyAllowance: saved.dutyAllowance != null ? saved.dutyAllowance : (d.dutyAllowance || 0),
+        specialBonus: saved.specialBonus != null ? saved.specialBonus : (d.specialBonus || 0),
         laborIns: saved.laborIns != null ? saved.laborIns : (d.laborIns || 0),
         healthIns: saved.healthIns != null ? saved.healthIns : (d.healthIns || 0),
         advance: saved.advance || 0,
@@ -1438,10 +1442,10 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
     }
     const rate = d.hourlyRate != null ? d.hourlyRate : 0;
     return {
-      position: d.position || "",
-      workHours: att.work, hourlyRate: rate,
-      otHours: att.ot, otRate: d.otRate != null ? d.otRate : (rate ? Math.round(rate * multiplier) : 0),
-      carWash: 0, dutyAllowance: 0, specialBonus: 0,
+      position: pos,
+      workHours: chief ? 1 : att.work, hourlyRate: rate,
+      otHours: chief ? 0 : att.ot, otRate: d.otRate != null ? d.otRate : (rate ? Math.round(rate * multiplier) : 0),
+      carWash: 0, dutyAllowance: d.dutyAllowance || 0, specialBonus: d.specialBonus || 0,
       laborIns: d.laborIns || 0, healthIns: d.healthIns || 0, advance: 0,
     };
   };
@@ -1475,12 +1479,70 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
       carWash: num(form.carWash), dutyAllowance: num(form.dutyAllowance), specialBonus: num(form.specialBonus),
       laborIns: num(form.laborIns), healthIns: num(form.healthIns), advance: num(form.advance),
     };
-    // 固定設定：時薪、加班時薪、勞保、健保、職務 → 存成該員工的每月預設，之後每個月自動帶入
+    // 固定設定 → 存成該員工的每月預設，之後每個月自動帶入（含職務加級、特別獎金）
     const defaults = {
       position: record.position, hourlyRate: record.hourlyRate, otRate: record.otRate,
       laborIns: record.laborIns, healthIns: record.healthIns,
+      dutyAllowance: record.dutyAllowance, specialBonus: record.specialBonus,
     };
     onSaveSalary(emp.id, ym, record, defaults);
+  };
+
+  // 職務下拉：選「站長」時自動改成月薪制（時數 1、月薪預設 30000、無時薪加班）
+  const changePosition = (v) => {
+    setForm((f) => {
+      const next = { ...f, position: v };
+      if (v === "站長") {
+        next.workHours = "1";
+        next.otHours = "0";
+        if (num(f.hourlyRate) < 1000) next.hourlyRate = "30000";
+      } else if (num(f.workHours) <= 1) {
+        next.workHours = String(attendance.work);
+        next.otHours = String(attendance.ot);
+      }
+      return next;
+    });
+  };
+
+  // 全員薪資總表：另開列印視窗，A4 橫向一次印出（也可存成 PDF）
+  const printSalarySummary = () => {
+    const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    let sumGross = 0, sumNet = 0;
+    const bodyRows = employees.map((e, i) => {
+      const rec = effectiveRecord(e);
+      const cc = calc(rec);
+      sumGross += cc.gross; sumNet += cc.netRounded;
+      const cells = [i + 1, e.name, rec.position || "一般", num(rec.workHours), num(rec.hourlyRate), num(rec.otHours), num(rec.otRate), num(rec.carWash), num(rec.dutyAllowance), num(rec.specialBonus), cc.gross, num(rec.laborIns), num(rec.healthIns), num(rec.advance), cc.netRounded];
+      return "<tr>" + cells.map((cv, ci) => `<td class="${ci >= 3 ? "num" : ""}">${esc(cv)}</td>`).join("") + "</tr>";
+    }).join("");
+    const heads = ["序號", "姓名", "職務", "工作時數", "時薪單價", "加班時數", "加班時薪", "洗車獎金", "職務加級", "特別獎金", "應發金額", "勞保", "健保", "借支", "實發金額"];
+    const thead = "<tr>" + heads.map((h) => `<th>${h}</th>`).join("") + "</tr>";
+    const totalRow = `<tr class="total"><td colspan="10">合計</td><td class="num">${sumGross.toLocaleString()}</td><td colspan="3"></td><td class="num">${sumNet.toLocaleString()}</td></tr>`;
+    const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>${year}年${month}月薪資表</title>
+<style>
+@page { size: A4 landscape; margin: 8mm; }
+* { box-sizing: border-box; }
+body { font-family: "Microsoft JhengHei","PingFang TC","Heiti TC",sans-serif; color:#111; margin:0; padding:8px; }
+h1 { font-size:17px; text-align:center; margin:2px 0 10px; }
+table { border-collapse: collapse; width:100%; font-size:11px; table-layout:fixed; }
+th,td { border:1px solid #444; padding:4px 5px; text-align:center; word-break:break-all; }
+th { background:#eaeaea; }
+td.num { text-align:right; font-variant-numeric: tabular-nums; }
+tr.total td { font-weight:bold; background:#f3f3f3; }
+.noprint { text-align:center; margin-top:14px; }
+@media print { .noprint { display:none; } }
+</style></head>
+<body>
+<h1>${year} 年 ${month} 月　薪資表</h1>
+<table><thead>${thead}</thead><tbody>${bodyRows}${totalRow}</tbody></table>
+<div class="noprint"><button onclick="window.print()" style="padding:8px 22px;font-size:14px;cursor:pointer;">列印 / 存成 PDF</button></div>
+<script>window.onload=function(){setTimeout(function(){try{window.print();}catch(e){}},400);};</script>
+</body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) { alert("請允許彈出視窗，才能開啟列印總表"); return; }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
   };
 
   const exportSalaryCsv = () => {
@@ -1522,15 +1584,21 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: `1px solid ${COLORS.border}` }}>
           <span style={{ fontSize: 13, color: COLORS.textMuted }}>職務 <span style={{ fontSize: 10, color: COLORS.textFaint }}>固定</span></span>
-          <input value={form.position} onChange={(e) => setForm((f) => ({ ...f, position: e.target.value }))} placeholder="（例如 站長）" style={{ ...SALARY_INPUT_STYLE, textAlign: "left", fontFamily: "inherit" }} />
+          <select value={form.position} onChange={(e) => changePosition(e.target.value)} style={{ ...SALARY_INPUT_STYLE, textAlign: "left", fontFamily: "inherit", width: 130 }}>
+            <option value="">一般</option>
+            <option value="站長">站長（月薪制）</option>
+          </select>
         </div>
-        <SalaryNumRow label="工作時數" hint={`考勤 ${attendance.work}`} value={form.workHours} onChange={setF("workHours")} />
-        <SalaryNumRow label="時薪單價" hint="固定" value={form.hourlyRate} onChange={setF("hourlyRate")} />
-        <SalaryNumRow label="加班時數" hint={`考勤 ${attendance.ot}`} value={form.otHours} onChange={setF("otHours")} />
+        {form.position === "站長" && (
+          <div style={{ fontSize: 10, color: COLORS.brass, padding: "2px 0 4px" }}>站長為月薪制：工作時數固定 1、時薪＝月薪。</div>
+        )}
+        <SalaryNumRow label={form.position === "站長" ? "工作時數（月薪制固定 1）" : "工作時數"} hint={form.position === "站長" ? "" : `考勤 ${attendance.work}`} value={form.workHours} onChange={setF("workHours")} />
+        <SalaryNumRow label={form.position === "站長" ? "月薪" : "時薪單價"} hint="固定" value={form.hourlyRate} onChange={setF("hourlyRate")} />
+        <SalaryNumRow label="加班時數" hint={form.position === "站長" ? "" : `考勤 ${attendance.ot}`} value={form.otHours} onChange={setF("otHours")} />
         <SalaryNumRow label="加班時薪" hint="固定" value={form.otRate} onChange={setF("otRate")} />
         <SalaryNumRow label="洗車獎金" value={form.carWash} onChange={setF("carWash")} />
-        <SalaryNumRow label="職務加級" value={form.dutyAllowance} onChange={setF("dutyAllowance")} />
-        <SalaryNumRow label="特別獎金" value={form.specialBonus} onChange={setF("specialBonus")} />
+        <SalaryNumRow label="職務加級" hint="固定" value={form.dutyAllowance} onChange={setF("dutyAllowance")} />
+        <SalaryNumRow label="特別獎金" hint="固定" value={form.specialBonus} onChange={setF("specialBonus")} />
         <SalaryTotalRow label="應發金額" value={c.gross} />
         <div style={{ borderTop: `1px dashed ${COLORS.border}` }} />
         <SalaryNumRow label="勞保" hint="固定" value={form.laborIns} onChange={setF("laborIns")} />
@@ -1542,16 +1610,21 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
         </div>
       </div>
 
+      <button onClick={save} style={{ width: "100%", padding: "11px 0", borderRadius: 8, border: "none", background: COLORS.brass, color: "#20160b", fontSize: 14, fontWeight: 700, cursor: "pointer", marginBottom: 10 }}>
+        儲存本月薪資
+      </button>
+
+      <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 6 }}>全員薪資總表（{year} 年 {month} 月）</div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button onClick={save} style={{ flex: 1, minWidth: 150, padding: "11px 0", borderRadius: 8, border: "none", background: COLORS.brass, color: "#20160b", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
-          儲存本月薪資
+        <button onClick={printSalarySummary} style={{ flex: 1, minWidth: 150, padding: "11px 0", borderRadius: 8, border: "none", background: COLORS.cardBlue, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+          🖨 列印總表（A4）
         </button>
         <button onClick={exportSalaryCsv} style={{ flex: 1, minWidth: 150, padding: "11px 0", borderRadius: 8, border: `1px solid ${COLORS.brassDim}`, background: "none", color: COLORS.brass, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-          ⤓ 匯出全員薪資 CSV
+          ⤓ 匯出總表 CSV
         </button>
       </div>
       <div style={{ fontSize: 11, color: COLORS.textFaint, marginTop: 8, lineHeight: 1.6 }}>
-        標「固定」的欄位（時薪、加班時薪、勞保、健保、職務）存一次後，之後每個月都會自動帶入這位員工的設定；工作／加班時數自動帶入該月考勤。應發＝工時×時薪＋加班時數×加班時薪＋各項獎金；實發＝應發−勞保−健保−借支。
+        標「固定」的欄位（時薪、加班時薪、勞保、健保、職務、職務加級、特別獎金）存一次後每個月自動帶入；工作／加班時數自動帶入該月考勤（站長月薪制固定 1）。「列印總表」會另開視窗、A4 橫向一次印出全部員工，也可存成 PDF。
       </div>
     </div>
   );
