@@ -576,10 +576,12 @@ export default function TimeClockApp() {
     }
   };
 
-  // 儲存某位員工某個月的薪資設定（樂觀更新 + 背景寫回）
-  const saveSalaryRecord = async (empId, ym, record) => {
+  // 儲存某位員工某個月的薪資設定（樂觀更新 + 背景寫回）；defaults＝該員工的固定設定，供每月自動帶入
+  const saveSalaryRecord = async (empId, ym, record, defaults) => {
     const base = salary || {};
-    const next = { ...base, [empId]: { ...(base[empId] || {}), [ym]: record } };
+    const empData = { ...(base[empId] || {}), [ym]: record };
+    if (defaults) empData.defaults = defaults;
+    const next = { ...base, [empId]: empData };
     setSalary(next);
     flash("已儲存薪資");
     try {
@@ -1362,7 +1364,32 @@ function DayEditRow({ row, colCount, onSave, onClose, onToggleHoliday, busy }) {
   );
 }
 
-// 薪資表：選員工＋月份，工作時數/加班時數自動帶入該月考勤，其餘欄位可手動填，應發/實發自動計算，可儲存與匯出。
+const SALARY_INPUT_STYLE = { width: 120, padding: "7px 9px", borderRadius: 7, background: COLORS.panelRaised, border: `1px solid ${COLORS.border}`, color: COLORS.text, fontSize: 14, outline: "none", textAlign: "right", fontFamily: "'Space Mono', monospace" };
+
+// 這兩個列元件放在模組層級（不要定義在 SalaryPanel 內部）。因為主畫面每秒會更新時鐘而重繪，
+// 若元件定義在內部，每次重繪都會產生新的元件型別 → 輸入框被重新掛載 → 手機鍵盤被收起。
+function SalaryNumRow({ label, hint, value, onChange }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: `1px solid ${COLORS.border}` }}>
+      <span style={{ fontSize: 13, color: COLORS.textMuted }}>
+        {label}{hint ? <span style={{ fontSize: 10, color: COLORS.textFaint, marginLeft: 6 }}>{hint}</span> : null}
+      </span>
+      <input type="number" inputMode="decimal" value={value} onChange={(e) => onChange(e.target.value)} style={SALARY_INPUT_STYLE} />
+    </div>
+  );
+}
+
+function SalaryTotalRow({ label, value, strong }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0" }}>
+      <span style={{ fontSize: strong ? 14 : 13, color: strong ? COLORS.brass : COLORS.text, fontWeight: 700 }}>{label}</span>
+      <span style={{ fontFamily: "'Space Mono', monospace", fontSize: strong ? 18 : 15, fontWeight: 700, color: strong ? COLORS.brass : COLORS.text }}>{Number(value).toLocaleString()}</span>
+    </div>
+  );
+}
+
+// 薪資表：選員工＋月份，工作/加班時數自動帶入該月考勤。時薪、加班時薪、勞保、健保、職務為
+// 「每位員工的固定設定」（存一次後每月自動預設）；洗車獎金等每月變動項目逐月填。
 function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSaveSalary }) {
   const multiplier = otMultiplier ?? 2;
   const overrides = holidays || {};
@@ -1390,29 +1417,32 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
 
   const attendance = useMemo(() => (emp ? hoursOf(emp) : { work: 0, ot: 0 }), [emp, punches, year, month, multiplier, holidays]);
 
-  // 找出某員工在本月之前最近一筆薪資設定，讓時薪/加班時薪/勞健保等自動沿用
-  const latestPrior = (empSal) => {
-    const keys = Object.keys(empSal || {});
-    if (!keys.length) return null;
-    const before = keys.filter((k) => k < ym).sort();
-    const pick = before.length ? before[before.length - 1] : keys.sort()[keys.length - 1];
-    return empSal[pick];
-  };
-
-  // 取「有效紀錄」：已存過的用存的；沒存過的用考勤時數＋沿用上次費率（匯出與表單初值共用）
+  // 取「有效紀錄」：已存過該月的用該月的；沒存過的用「員工固定設定 defaults」＋該月考勤時數。
   const effectiveRecord = (e) => {
     const empSal = (salary || {})[e.id] || {};
-    const saved = empSal[ym];
-    if (saved) return saved;
     const att = hoursOf(e);
-    const p = latestPrior(empSal) || {};
-    const rate = p.hourlyRate != null ? p.hourlyRate : 0;
+    const saved = empSal[ym];
+    const d = empSal.defaults || {};
+    if (saved) {
+      return {
+        position: saved.position != null ? saved.position : (d.position || ""),
+        workHours: saved.workHours != null ? saved.workHours : att.work,
+        hourlyRate: saved.hourlyRate != null ? saved.hourlyRate : (d.hourlyRate || 0),
+        otHours: saved.otHours != null ? saved.otHours : att.ot,
+        otRate: saved.otRate != null ? saved.otRate : (d.otRate || 0),
+        carWash: saved.carWash || 0, dutyAllowance: saved.dutyAllowance || 0, specialBonus: saved.specialBonus || 0,
+        laborIns: saved.laborIns != null ? saved.laborIns : (d.laborIns || 0),
+        healthIns: saved.healthIns != null ? saved.healthIns : (d.healthIns || 0),
+        advance: saved.advance || 0,
+      };
+    }
+    const rate = d.hourlyRate != null ? d.hourlyRate : 0;
     return {
-      position: p.position || "",
+      position: d.position || "",
       workHours: att.work, hourlyRate: rate,
-      otHours: att.ot, otRate: p.otRate != null ? p.otRate : (rate ? Math.round(rate * multiplier) : 0),
+      otHours: att.ot, otRate: d.otRate != null ? d.otRate : (rate ? Math.round(rate * multiplier) : 0),
       carWash: 0, dutyAllowance: 0, specialBonus: 0,
-      laborIns: p.laborIns || 0, healthIns: p.healthIns || 0, advance: 0,
+      laborIns: d.laborIns || 0, healthIns: d.healthIns || 0, advance: 0,
     };
   };
 
@@ -1435,22 +1465,30 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
     return { gross, net, netRounded: Math.ceil(net / 100) * 100 };
   };
 
+  const setF = (k) => (v) => setForm((f) => ({ ...f, [k]: v }));
+
   const save = () => {
-    onSaveSalary(emp.id, ym, {
+    const record = {
       position: form.position || "",
       workHours: num(form.workHours), hourlyRate: num(form.hourlyRate),
       otHours: num(form.otHours), otRate: num(form.otRate),
       carWash: num(form.carWash), dutyAllowance: num(form.dutyAllowance), specialBonus: num(form.specialBonus),
       laborIns: num(form.laborIns), healthIns: num(form.healthIns), advance: num(form.advance),
-    });
+    };
+    // 固定設定：時薪、加班時薪、勞保、健保、職務 → 存成該員工的每月預設，之後每個月自動帶入
+    const defaults = {
+      position: record.position, hourlyRate: record.hourlyRate, otRate: record.otRate,
+      laborIns: record.laborIns, healthIns: record.healthIns,
+    };
+    onSaveSalary(emp.id, ym, record, defaults);
   };
 
   const exportSalaryCsv = () => {
     const header = ["序號", "姓名", "職務", "工作時數", "時薪單價", "加班時數", "加班時薪", "洗車獎金", "職務加級", "特別獎金", "應發金額", "勞保", "健保", "借支", "實發金額"];
     const body = employees.map((e, i) => {
       const rec = effectiveRecord(e);
-      const c = calc(rec);
-      return [i + 1, e.name, rec.position || "", num(rec.workHours), num(rec.hourlyRate), num(rec.otHours), num(rec.otRate), num(rec.carWash), num(rec.dutyAllowance), num(rec.specialBonus), c.gross, num(rec.laborIns), num(rec.healthIns), num(rec.advance), c.netRounded];
+      const cc = calc(rec);
+      return [i + 1, e.name, rec.position || "", num(rec.workHours), num(rec.hourlyRate), num(rec.otHours), num(rec.otRate), num(rec.carWash), num(rec.dutyAllowance), num(rec.specialBonus), cc.gross, num(rec.laborIns), num(rec.healthIns), num(rec.advance), cc.netRounded];
     });
     downloadCsv(`薪資_${year}-${pad2(month)}.csv`, [[`${year}年${month}月　薪資表`], [], header, ...body]);
   };
@@ -1462,21 +1500,6 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
 
   const c = calc(form);
   const selStyle = { flex: 1, padding: "9px 10px", borderRadius: 8, background: COLORS.panelRaised, border: `1px solid ${COLORS.border}`, color: COLORS.text, fontSize: 13, outline: "none" };
-  const inputStyle = { width: 120, padding: "7px 9px", borderRadius: 7, background: COLORS.panelRaised, border: `1px solid ${COLORS.border}`, color: COLORS.text, fontSize: 14, outline: "none", textAlign: "right", fontFamily: "'Space Mono', monospace" };
-  const NumRow = ({ label, k, hint }) => (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: `1px solid ${COLORS.border}` }}>
-      <span style={{ fontSize: 13, color: COLORS.textMuted }}>
-        {label}{hint ? <span style={{ fontSize: 10, color: COLORS.textFaint, marginLeft: 6 }}>{hint}</span> : null}
-      </span>
-      <input type="number" inputMode="decimal" value={form[k]} onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))} style={inputStyle} />
-    </div>
-  );
-  const TotalRow = ({ label, value, strong }) => (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0" }}>
-      <span style={{ fontSize: strong ? 14 : 13, color: strong ? COLORS.brass : COLORS.text, fontWeight: 700 }}>{label}</span>
-      <span style={{ fontFamily: "'Space Mono', monospace", fontSize: strong ? 18 : 15, fontWeight: 700, color: strong ? COLORS.brass : COLORS.text }}>{value.toLocaleString()}</span>
-    </div>
-  );
 
   return (
     <div>
@@ -1498,22 +1521,22 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
           <span style={{ fontSize: 12, color: COLORS.textFaint }}>{year} 年 {month} 月</span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: `1px solid ${COLORS.border}` }}>
-          <span style={{ fontSize: 13, color: COLORS.textMuted }}>職務</span>
-          <input value={form.position} onChange={(e) => setForm((f) => ({ ...f, position: e.target.value }))} placeholder="（例如 站長）" style={{ ...inputStyle, textAlign: "left", fontFamily: "inherit" }} />
+          <span style={{ fontSize: 13, color: COLORS.textMuted }}>職務 <span style={{ fontSize: 10, color: COLORS.textFaint }}>固定</span></span>
+          <input value={form.position} onChange={(e) => setForm((f) => ({ ...f, position: e.target.value }))} placeholder="（例如 站長）" style={{ ...SALARY_INPUT_STYLE, textAlign: "left", fontFamily: "inherit" }} />
         </div>
-        <NumRow label="工作時數" k="workHours" hint={`考勤 ${attendance.work}`} />
-        <NumRow label="時薪單價" k="hourlyRate" />
-        <NumRow label="加班時數" k="otHours" hint={`考勤 ${attendance.ot}`} />
-        <NumRow label="加班時薪" k="otRate" />
-        <NumRow label="洗車獎金" k="carWash" />
-        <NumRow label="職務加級" k="dutyAllowance" />
-        <NumRow label="特別獎金" k="specialBonus" />
-        <TotalRow label="應發金額" value={c.gross} />
+        <SalaryNumRow label="工作時數" hint={`考勤 ${attendance.work}`} value={form.workHours} onChange={setF("workHours")} />
+        <SalaryNumRow label="時薪單價" hint="固定" value={form.hourlyRate} onChange={setF("hourlyRate")} />
+        <SalaryNumRow label="加班時數" hint={`考勤 ${attendance.ot}`} value={form.otHours} onChange={setF("otHours")} />
+        <SalaryNumRow label="加班時薪" hint="固定" value={form.otRate} onChange={setF("otRate")} />
+        <SalaryNumRow label="洗車獎金" value={form.carWash} onChange={setF("carWash")} />
+        <SalaryNumRow label="職務加級" value={form.dutyAllowance} onChange={setF("dutyAllowance")} />
+        <SalaryNumRow label="特別獎金" value={form.specialBonus} onChange={setF("specialBonus")} />
+        <SalaryTotalRow label="應發金額" value={c.gross} />
         <div style={{ borderTop: `1px dashed ${COLORS.border}` }} />
-        <NumRow label="勞保" k="laborIns" />
-        <NumRow label="健保" k="healthIns" />
-        <NumRow label="借支" k="advance" />
-        <TotalRow label="實發金額" value={c.netRounded} strong />
+        <SalaryNumRow label="勞保" hint="固定" value={form.laborIns} onChange={setF("laborIns")} />
+        <SalaryNumRow label="健保" hint="固定" value={form.healthIns} onChange={setF("healthIns")} />
+        <SalaryNumRow label="借支" value={form.advance} onChange={setF("advance")} />
+        <SalaryTotalRow label="實發金額" value={c.netRounded} strong />
         <div style={{ textAlign: "right", fontSize: 10, color: COLORS.textFaint, marginTop: -4 }}>
           （未進位 {c.net.toLocaleString()}；實發為無條件進位到百元）
         </div>
@@ -1528,7 +1551,7 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
         </button>
       </div>
       <div style={{ fontSize: 11, color: COLORS.textFaint, marginTop: 8, lineHeight: 1.6 }}>
-        工作時數／加班時數預設帶入該月考勤（可手動改，例如月薪制可自行填）。時薪、加班時薪、勞健保會自動沿用上個月設定。應發＝工時×時薪＋加班時數×加班時薪＋各項獎金；實發＝應發−勞保−健保−借支。
+        標「固定」的欄位（時薪、加班時薪、勞保、健保、職務）存一次後，之後每個月都會自動帶入這位員工的設定；工作／加班時數自動帶入該月考勤。應發＝工時×時薪＋加班時數×加班時薪＋各項獎金；實發＝應發−勞保−健保−借支。
       </div>
     </div>
   );
