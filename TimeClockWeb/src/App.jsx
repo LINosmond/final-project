@@ -387,6 +387,7 @@ export default function TimeClockApp() {
   const [holidays, setHolidays] = useState(null); // array of "YYYY-MM-DD" strings
   const [companyLocation, setCompanyLocation] = useState(null); // { lat, lng, radius } or null = 不限制
   const [otMultiplier, setOtMultiplier] = useState(null); // 平日超過 8 小時部分的工時倍率，預設 2
+  const [salary, setSalary] = useState(null); // 薪資設定：{ "<empId>": { "<YYYY-MM>": {...} } }
   const [sessionId, setSessionId] = useState("");
   const [sessionType, setSessionType] = useState(""); // "employee" | "admin"
   const [busy, setBusy] = useState(false);
@@ -409,7 +410,7 @@ export default function TimeClockApp() {
   }, []);
 
   const loadAll = useCallback(async () => {
-    const KEYS = ["employees", "punches", "holidays", "companyLocation", "otMultiplier"];
+    const KEYS = ["employees", "punches", "holidays", "companyLocation", "otMultiplier", "salary"];
 
     // 先試著用 getAll 一次抓齊所有資料（只打一次 Apps Script，載入快很多）。
     // 若後端還是舊版（不認得 getAll）或發生網路錯誤，raw 會維持 null，改走下方逐一讀取的相容路徑。
@@ -473,6 +474,12 @@ export default function TimeClockApp() {
 
     const ot = parse(raw.otMultiplier, 2);
     if (ot !== undefined) setOtMultiplier(ot);
+
+    const sal = parse(raw.salary, {});
+    // 避免暫時性讀到空物件就清掉已載入的薪資設定
+    if (sal !== undefined) {
+      setSalary((prev) => (sal && Object.keys(sal).length === 0 && prev && Object.keys(prev).length > 0 ? prev : sal));
+    }
   }, []);
 
   useEffect(() => {
@@ -566,6 +573,19 @@ export default function TimeClockApp() {
       flash("已更新超時倍率設定");
     } catch (e) {
       flash("儲存超時倍率失敗，請稍後再試", "error");
+    }
+  };
+
+  // 儲存某位員工某個月的薪資設定（樂觀更新 + 背景寫回）
+  const saveSalaryRecord = async (empId, ym, record) => {
+    const base = salary || {};
+    const next = { ...base, [empId]: { ...(base[empId] || {}), [ym]: record } };
+    setSalary(next);
+    flash("已儲存薪資");
+    try {
+      await window.storage.set("salary", JSON.stringify(next), true);
+    } catch (e) {
+      flash("薪資儲存失敗，請稍後再試", "error");
     }
   };
 
@@ -876,6 +896,8 @@ export default function TimeClockApp() {
               onClearLocation={clearCompanyLocation}
               otMultiplier={otMultiplier}
               onSaveOtMultiplier={saveOtMultiplier}
+              salary={salary}
+              onSaveSalary={saveSalaryRecord}
               busy={busy}
             />
           </>
@@ -1340,7 +1362,179 @@ function DayEditRow({ row, colCount, onSave, onClose, onToggleHoliday, busy }) {
   );
 }
 
-function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, onAddEmployee, onRemoveEmployee, onUpdateDay, onToggleHoliday, onExportBackup, onImportBackup, onReviewEmployee, companyLocation, onSaveLocation, onClearLocation, otMultiplier, onSaveOtMultiplier, busy }) {
+// 薪資表：選員工＋月份，工作時數/加班時數自動帶入該月考勤，其餘欄位可手動填，應發/實發自動計算，可儲存與匯出。
+function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSaveSalary }) {
+  const multiplier = otMultiplier ?? 2;
+  const overrides = holidays || {};
+  const today = new Date();
+  const [employeeId, setEmployeeId] = useState(employees[0]?.id || "");
+  const [year, setYear] = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth() + 1);
+  const [form, setForm] = useState(null);
+
+  useEffect(() => {
+    if (!employees.some((e) => e.id === employeeId)) setEmployeeId(employees[0]?.id || "");
+  }, [employees, employeeId]);
+
+  const emp = employees.find((e) => e.id === employeeId);
+  const ym = `${year}-${pad2(month)}`;
+  const num = (x) => { const n = Number(x); return isFinite(n) ? n : 0; };
+  const round2 = (n) => Math.round(n * 100) / 100;
+
+  const hoursOf = (e) => {
+    const rows = computeMonthRows(e, punches, year, month, multiplier, overrides);
+    const bMin = rows.reduce((s, r) => s + (r.isHoliday ? r.subtotalMin * 2 : r.subtotalMin - r.otMin), 0);
+    const oMin = rows.reduce((s, r) => s + r.otMin, 0);
+    return { work: round2(bMin / 60), ot: round2(oMin / 60) };
+  };
+
+  const attendance = useMemo(() => (emp ? hoursOf(emp) : { work: 0, ot: 0 }), [emp, punches, year, month, multiplier, holidays]);
+
+  // 找出某員工在本月之前最近一筆薪資設定，讓時薪/加班時薪/勞健保等自動沿用
+  const latestPrior = (empSal) => {
+    const keys = Object.keys(empSal || {});
+    if (!keys.length) return null;
+    const before = keys.filter((k) => k < ym).sort();
+    const pick = before.length ? before[before.length - 1] : keys.sort()[keys.length - 1];
+    return empSal[pick];
+  };
+
+  // 取「有效紀錄」：已存過的用存的；沒存過的用考勤時數＋沿用上次費率（匯出與表單初值共用）
+  const effectiveRecord = (e) => {
+    const empSal = (salary || {})[e.id] || {};
+    const saved = empSal[ym];
+    if (saved) return saved;
+    const att = hoursOf(e);
+    const p = latestPrior(empSal) || {};
+    const rate = p.hourlyRate != null ? p.hourlyRate : 0;
+    return {
+      position: p.position || "",
+      workHours: att.work, hourlyRate: rate,
+      otHours: att.ot, otRate: p.otRate != null ? p.otRate : (rate ? Math.round(rate * multiplier) : 0),
+      carWash: 0, dutyAllowance: 0, specialBonus: 0,
+      laborIns: p.laborIns || 0, healthIns: p.healthIns || 0, advance: 0,
+    };
+  };
+
+  useEffect(() => {
+    if (!emp) { setForm(null); return; }
+    const rec = effectiveRecord(emp);
+    const s = (v) => (v == null || v === "" ? "" : String(v));
+    setForm({
+      position: s(rec.position), workHours: s(rec.workHours), hourlyRate: s(rec.hourlyRate),
+      otHours: s(rec.otHours), otRate: s(rec.otRate), carWash: s(rec.carWash),
+      dutyAllowance: s(rec.dutyAllowance), specialBonus: s(rec.specialBonus),
+      laborIns: s(rec.laborIns), healthIns: s(rec.healthIns), advance: s(rec.advance),
+    });
+  }, [employeeId, ym, salary]);
+
+  const calc = (rec) => {
+    const gross = num(rec.workHours) * num(rec.hourlyRate) + num(rec.otHours) * num(rec.otRate)
+      + num(rec.carWash) + num(rec.dutyAllowance) + num(rec.specialBonus);
+    const net = gross - num(rec.laborIns) - num(rec.healthIns) - num(rec.advance);
+    return { gross, net, netRounded: Math.ceil(net / 100) * 100 };
+  };
+
+  const save = () => {
+    onSaveSalary(emp.id, ym, {
+      position: form.position || "",
+      workHours: num(form.workHours), hourlyRate: num(form.hourlyRate),
+      otHours: num(form.otHours), otRate: num(form.otRate),
+      carWash: num(form.carWash), dutyAllowance: num(form.dutyAllowance), specialBonus: num(form.specialBonus),
+      laborIns: num(form.laborIns), healthIns: num(form.healthIns), advance: num(form.advance),
+    });
+  };
+
+  const exportSalaryCsv = () => {
+    const header = ["序號", "姓名", "職務", "工作時數", "時薪單價", "加班時數", "加班時薪", "洗車獎金", "職務加級", "特別獎金", "應發金額", "勞保", "健保", "借支", "實發金額"];
+    const body = employees.map((e, i) => {
+      const rec = effectiveRecord(e);
+      const c = calc(rec);
+      return [i + 1, e.name, rec.position || "", num(rec.workHours), num(rec.hourlyRate), num(rec.otHours), num(rec.otRate), num(rec.carWash), num(rec.dutyAllowance), num(rec.specialBonus), c.gross, num(rec.laborIns), num(rec.healthIns), num(rec.advance), c.netRounded];
+    });
+    downloadCsv(`薪資_${year}-${pad2(month)}.csv`, [[`${year}年${month}月　薪資表`], [], header, ...body]);
+  };
+
+  if (!employees.length) {
+    return <div style={{ textAlign: "center", padding: "40px 0", color: COLORS.textMuted, fontSize: 13 }}>尚無員工帳號</div>;
+  }
+  if (!form) return null;
+
+  const c = calc(form);
+  const selStyle = { flex: 1, padding: "9px 10px", borderRadius: 8, background: COLORS.panelRaised, border: `1px solid ${COLORS.border}`, color: COLORS.text, fontSize: 13, outline: "none" };
+  const inputStyle = { width: 120, padding: "7px 9px", borderRadius: 7, background: COLORS.panelRaised, border: `1px solid ${COLORS.border}`, color: COLORS.text, fontSize: 14, outline: "none", textAlign: "right", fontFamily: "'Space Mono', monospace" };
+  const NumRow = ({ label, k, hint }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: `1px solid ${COLORS.border}` }}>
+      <span style={{ fontSize: 13, color: COLORS.textMuted }}>
+        {label}{hint ? <span style={{ fontSize: 10, color: COLORS.textFaint, marginLeft: 6 }}>{hint}</span> : null}
+      </span>
+      <input type="number" inputMode="decimal" value={form[k]} onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))} style={inputStyle} />
+    </div>
+  );
+  const TotalRow = ({ label, value, strong }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0" }}>
+      <span style={{ fontSize: strong ? 14 : 13, color: strong ? COLORS.brass : COLORS.text, fontWeight: 700 }}>{label}</span>
+      <span style={{ fontFamily: "'Space Mono', monospace", fontSize: strong ? 18 : 15, fontWeight: 700, color: strong ? COLORS.brass : COLORS.text }}>{value.toLocaleString()}</span>
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} style={{ ...selStyle, flex: 1.4 }}>
+          {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+        </select>
+        <select value={month} onChange={(e) => setMonth(Number(e.target.value))} style={selStyle}>
+          {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{m} 月</option>)}
+        </select>
+        <select value={year} onChange={(e) => setYear(Number(e.target.value))} style={selStyle}>
+          {[today.getFullYear() - 1, today.getFullYear(), today.getFullYear() + 1].map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+
+      <div style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <span style={{ fontSize: 15, fontWeight: 700, color: COLORS.text }}>{emp?.name} 薪資單</span>
+          <span style={{ fontSize: 12, color: COLORS.textFaint }}>{year} 年 {month} 月</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: `1px solid ${COLORS.border}` }}>
+          <span style={{ fontSize: 13, color: COLORS.textMuted }}>職務</span>
+          <input value={form.position} onChange={(e) => setForm((f) => ({ ...f, position: e.target.value }))} placeholder="（例如 站長）" style={{ ...inputStyle, textAlign: "left", fontFamily: "inherit" }} />
+        </div>
+        <NumRow label="工作時數" k="workHours" hint={`考勤 ${attendance.work}`} />
+        <NumRow label="時薪單價" k="hourlyRate" />
+        <NumRow label="加班時數" k="otHours" hint={`考勤 ${attendance.ot}`} />
+        <NumRow label="加班時薪" k="otRate" />
+        <NumRow label="洗車獎金" k="carWash" />
+        <NumRow label="職務加級" k="dutyAllowance" />
+        <NumRow label="特別獎金" k="specialBonus" />
+        <TotalRow label="應發金額" value={c.gross} />
+        <div style={{ borderTop: `1px dashed ${COLORS.border}` }} />
+        <NumRow label="勞保" k="laborIns" />
+        <NumRow label="健保" k="healthIns" />
+        <NumRow label="借支" k="advance" />
+        <TotalRow label="實發金額" value={c.netRounded} strong />
+        <div style={{ textAlign: "right", fontSize: 10, color: COLORS.textFaint, marginTop: -4 }}>
+          （未進位 {c.net.toLocaleString()}；實發為無條件進位到百元）
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button onClick={save} style={{ flex: 1, minWidth: 150, padding: "11px 0", borderRadius: 8, border: "none", background: COLORS.brass, color: "#20160b", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+          儲存本月薪資
+        </button>
+        <button onClick={exportSalaryCsv} style={{ flex: 1, minWidth: 150, padding: "11px 0", borderRadius: 8, border: `1px solid ${COLORS.brassDim}`, background: "none", color: COLORS.brass, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+          ⤓ 匯出全員薪資 CSV
+        </button>
+      </div>
+      <div style={{ fontSize: 11, color: COLORS.textFaint, marginTop: 8, lineHeight: 1.6 }}>
+        工作時數／加班時數預設帶入該月考勤（可手動改，例如月薪制可自行填）。時薪、加班時薪、勞健保會自動沿用上個月設定。應發＝工時×時薪＋加班時數×加班時薪＋各項獎金；實發＝應發−勞保−健保−借支。
+      </div>
+    </div>
+  );
+}
+
+function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, onAddEmployee, onRemoveEmployee, onUpdateDay, onToggleHoliday, onExportBackup, onImportBackup, onReviewEmployee, companyLocation, onSaveLocation, onClearLocation, otMultiplier, onSaveOtMultiplier, salary, onSaveSalary, busy }) {
   const multiplier = otMultiplier ?? 2;
   const today = new Date();
   const overrides = holidays || {};
@@ -1433,7 +1627,7 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
   // 管理員畫面分成三個子分頁（考勤卡／員工管理／設定），避免所有面板全部堆在一起
   const adminTabBar = canEdit && (
     <div style={{ display: "flex", background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 4, marginBottom: 14 }}>
-      {[["records", "考勤卡"], ["staff", "員工管理"], ["settings", "設定"]].map(([key, label]) => (
+      {[["records", "考勤卡"], ["staff", "員工管理"], ["salary", "薪資"], ["settings", "設定"]].map(([key, label]) => (
         <button
           key={key}
           onClick={() => setAdminTab(key)}
@@ -1481,6 +1675,16 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
       {adminTabBar}
 
       {canEdit && adminTab === "staff" && staffSection}
+      {canEdit && adminTab === "salary" && (
+        <SalaryPanel
+          employees={activeEmployees}
+          punches={punches}
+          holidays={holidays}
+          otMultiplier={multiplier}
+          salary={salary}
+          onSaveSalary={onSaveSalary}
+        />
+      )}
       {canEdit && adminTab === "settings" && settingsSection}
 
       {(!canEdit || adminTab === "records") && (
