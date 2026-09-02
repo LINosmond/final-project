@@ -1630,7 +1630,12 @@ table.card tr.hl th, table.card tr.hl td { font-weight:bold; background:#f3f3f3;
       <div style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
           <span style={{ fontSize: 15, fontWeight: 700, color: COLORS.text }}>{emp?.name} 薪資單</span>
-          <span style={{ fontSize: 12, color: COLORS.textFaint }}>{year} 年 {month} 月</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 12, color: COLORS.textFaint }}>{year} 年 {month} 月</span>
+            <button onClick={save} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: COLORS.brass, color: "#20160b", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+              💾 儲存
+            </button>
+          </div>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: `1px solid ${COLORS.border}` }}>
           <span style={{ fontSize: 13, color: COLORS.textMuted }}>職務 <span style={{ fontSize: 10, color: COLORS.textFaint }}>固定</span></span>
