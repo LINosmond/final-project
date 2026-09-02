@@ -1406,17 +1406,19 @@ function SalaryTotalRow({ label, value, strong }) {
   );
 }
 
-// 原始檔案的勞保／健保初始值（依姓名對應），作為尚未設定過的員工預設。
-const SEED_INSURANCE = {
-  "許嘉晏": { laborIns: 758, healthIns: 470 },
-  "李明諺": { laborIns: 429, healthIns: 447 },
-  "林毅傑": { laborIns: 870, healthIns: 540 },
-  "韓建龍": { laborIns: 758, healthIns: 470 },
-  "何嘉玲": { laborIns: 758, healthIns: 470 },
-  "劉祐寧": { laborIns: 758, healthIns: 470 },
-  "藍冠秉": { laborIns: 0, healthIns: 0 },
-  "張清清": { laborIns: 1145, healthIns: 710 },
-  "林宸漢": { laborIns: 715, healthIns: 447 },
+// 原始檔案（薪資 Excel）的固定欄位初始值，依姓名對應，作為「尚未設定過的員工」每月預設。
+// 涵蓋：職務（站長＝月薪制）、時薪單價、加班時薪（全員 263）、職務加級、特別獎金、勞保、健保。
+// 員工一旦在系統內按過「儲存」，就以儲存的固定設定為準，不再套用這裡的預設。
+const SEED_DEFAULTS = {
+  "許嘉晏": { position: "",   hourlyRate: 196,   otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 758,  healthIns: 470 },
+  "李明諺": { position: "",   hourlyRate: 196,   otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 429,  healthIns: 447 },
+  "林毅傑": { position: "站長", hourlyRate: 30000, otRate: 263, dutyAllowance: 7000, specialBonus: 2000, laborIns: 870,  healthIns: 540 },
+  "韓建龍": { position: "",   hourlyRate: 196,   otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 758,  healthIns: 470 },
+  "何嘉玲": { position: "",   hourlyRate: 196,   otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 758,  healthIns: 470 },
+  "劉祐寧": { position: "",   hourlyRate: 196,   otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 758,  healthIns: 470 },
+  "藍冠秉": { position: "",   hourlyRate: 196,   otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 0,    healthIns: 0 },
+  "張清清": { position: "站長", hourlyRate: 35000, otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 1145, healthIns: 710 },
+  "林宸漢": { position: "站長", hourlyRate: 50000, otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 715,  healthIns: 447 },
 };
 
 // 薪資表：選員工＋月份，工作/加班時數自動帶入該月考勤。時薪、加班時薪、勞保、健保、職務為
@@ -1454,33 +1456,39 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
     const att = hoursOf(e);
     const saved = empSal[ym];
     const d = empSal.defaults || {};
-    // 依姓名帶入原始檔案的勞健保初始值（尚未存過任何預設時使用；之後儲存就以儲存的為準）
-    const seed = SEED_INSURANCE[e.name] || {};
-    const dLabor = d.laborIns != null ? d.laborIns : (seed.laborIns != null ? seed.laborIns : 0);
-    const dHealth = d.healthIns != null ? d.healthIns : (seed.healthIns != null ? seed.healthIns : 0);
-    const pos = saved && saved.position != null ? saved.position : (d.position || "");
+    // 依姓名帶入原始檔案的固定設定（尚未存過任何預設時使用；之後儲存就以儲存的為準）：
+    // 職務、時薪、加班時薪（263）、職務加級、特別獎金、勞保、健保。
+    const seed = SEED_DEFAULTS[e.name] || {};
+    const pick = (dv, sv, fb) => (dv != null ? dv : (sv != null ? sv : fb));
+    const dLabor = pick(d.laborIns, seed.laborIns, 0);
+    const dHealth = pick(d.healthIns, seed.healthIns, 0);
+    const dHourly = pick(d.hourlyRate, seed.hourlyRate, 0);
+    const dDuty = pick(d.dutyAllowance, seed.dutyAllowance, 0);
+    const dSpecial = pick(d.specialBonus, seed.specialBonus, 0);
+    const dPos = pick(d.position, seed.position, "");
+    const pos = saved && saved.position != null ? saved.position : dPos;
     const chief = pos === "站長"; // 站長＝月薪制：時數 1、時薪＝月薪、無時薪加班
+    const dOtRate = pick(d.otRate, seed.otRate, (dHourly ? Math.round(dHourly * multiplier) : 0));
     if (saved) {
       return {
         position: pos,
         workHours: saved.workHours != null ? saved.workHours : (chief ? 1 : att.work),
-        hourlyRate: saved.hourlyRate != null ? saved.hourlyRate : (d.hourlyRate || 0),
+        hourlyRate: saved.hourlyRate != null ? saved.hourlyRate : dHourly,
         otHours: saved.otHours != null ? saved.otHours : (chief ? 0 : att.ot),
-        otRate: saved.otRate != null ? saved.otRate : (d.otRate || 0),
+        otRate: saved.otRate != null ? saved.otRate : dOtRate,
         carWash: saved.carWash || 0,
-        dutyAllowance: saved.dutyAllowance != null ? saved.dutyAllowance : (d.dutyAllowance || 0),
-        specialBonus: saved.specialBonus != null ? saved.specialBonus : (d.specialBonus || 0),
+        dutyAllowance: saved.dutyAllowance != null ? saved.dutyAllowance : dDuty,
+        specialBonus: saved.specialBonus != null ? saved.specialBonus : dSpecial,
         laborIns: saved.laborIns != null ? saved.laborIns : dLabor,
         healthIns: saved.healthIns != null ? saved.healthIns : dHealth,
         advance: saved.advance || 0,
       };
     }
-    const rate = d.hourlyRate != null ? d.hourlyRate : 0;
     return {
       position: pos,
-      workHours: chief ? 1 : att.work, hourlyRate: rate,
-      otHours: chief ? 0 : att.ot, otRate: d.otRate != null ? d.otRate : (rate ? Math.round(rate * multiplier) : 0),
-      carWash: 0, dutyAllowance: d.dutyAllowance || 0, specialBonus: d.specialBonus || 0,
+      workHours: chief ? 1 : att.work, hourlyRate: dHourly,
+      otHours: chief ? 0 : att.ot, otRate: dOtRate,
+      carWash: 0, dutyAllowance: dDuty, specialBonus: dSpecial,
       laborIns: dLabor, healthIns: dHealth, advance: 0,
     };
   };
