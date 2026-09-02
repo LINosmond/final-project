@@ -1512,73 +1512,152 @@ function salaryCalc(rec) {
 }
 
 // ===== 申報薪資表：只產生「可列印」的申報用打卡紀錄＋薪資列表，完全不寫入任何資料 =====
-// 站長以外的員工：把當月「申報工時」隨機設為 154~163 小時、洗車獎金隨機 600~900；
-// 並據此排出一份合理的每日班表（09:00 上班，時數落在 7~9 小時）。站長維持月薪制原樣。
+// 站長以外的員工：每人固定上早班或晚班；自動排出上班天數使「實發薪資落在 29500~33000」、
+// 洗車獎金隨機 600~900。排班保證：每一天每個班別都至少 1 人上班、且無人連續上班 7 天以上。
+// 站長：月休 7 天（其餘上日班 09:00–18:00）；申報用職務加級改 5000、特別獎金 0（不動真實資料）。
 function openDeclarationPrint(list, salary, punches, year, month, multiplier, overrides) {
   const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const randInt = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
   const WD = ["日", "一", "二", "三", "四", "五", "六"];
   const daysInMonth = new Date(year, month, 0).getDate();
+  const dow = (d) => WD[new Date(year, month - 1, d).getDay()]; // d 為 1-based 日期
+  const LO = 29500, HI = 33000;
+  const SHIFTS = {
+    早: { inT: "06:00", outT: "13:30", h: 7.5 },
+    晚: { inT: "13:30", outT: "21:00", h: 7.5 },
+    日: { inT: "09:00", outT: "18:00", h: 9 }, // 站長日班
+  };
 
-  // 依申報總時數 T（整數），排出每日班表：跳過週日，均勻挑約 T/8 天，每天 8 小時再微調餘數
-  // 收集當月工作日（跳過週日）
-  const WDdays = [];
-  for (let d = 1; d <= daysInMonth; d++) {
-    const g = new Date(year, month - 1, d).getDay();
-    if (g !== 0) WDdays.push({ day: d, wd: WD[g] });
-  }
-  const maxDays = WDdays.length;
-
-  // 依「目標實發薪資」挑出 7.5 小時班的天數 N，使實發薪資落在 29500~33000。
-  // 每個 7.5 小時班對薪資的貢獻＝7.5×時薪；固定項＝洗車獎金＋職務加級＋特別獎金－勞保－健保。
-  const pickShiftCount = (H, carWash, duty, special, labor, health) => {
-    const fixed = carWash + duty + special - labor - health;
+  // 依時薪 H 與固定項，挑一個工作天數 W（每日 7.5 小時），使實發薪資落在 [LO,HI]
+  const workdaysFor = (H, fixed) => {
     const per = 7.5 * H;
-    const lo = Math.max(6, Math.ceil((29500 - fixed) / per));
-    const hi = Math.min(maxDays, Math.floor((33000 - fixed) / per));
-    if (hi < lo) return Math.min(lo, maxDays); // 極端情況（範圍容不下一個班）保底
+    const lo = Math.max(1, Math.ceil((LO - fixed) / per));
+    const hi = Math.min(daysInMonth, Math.floor((HI - fixed) / per));
+    if (hi < lo) return Math.max(1, Math.min(lo, daysInMonth));
     return lo + Math.floor(Math.random() * (hi - lo + 1));
   };
 
-  // 排出 N 天班表：早班 06:00–13:30、晚班 13:30–21:00（各 7.5 小時），
-  // 每 6 個工作日排「3 早 3 晚」，工作日均勻分布於整個月、跳過週日。
-  const genShifts = (N) => {
-    N = Math.max(1, Math.min(N, maxDays));
-    const step = maxDays / N;
-    const chosen = [];
-    for (let i = 0; i < N; i++) chosen.push(WDdays[Math.floor(i * step)]);
-    return chosen.map((w, i) => ((i % 6) < 3
-      ? { ...w, type: "早", inT: "06:00", outT: "13:30" }
-      : { ...w, type: "晚", inT: "13:30", outT: "21:00" }));
-  };
-
-  // 逐位員工組出「申報用」的薪資紀錄與班表
-  const rows = [];
+  // 分出站長與時薪員工
+  const chiefRows = [], workerRows = [];
   list.forEach((e) => {
     const eff = salaryEffectiveRecord(e, salary, punches, year, month, multiplier, overrides);
-    const chief = eff.position === "站長";
-    if (chief) { rows.push({ e, rec: eff, shifts: null, chief: true }); return; } // 站長月薪制，不排班
+    if (eff.position === "站長") { chiefRows.push({ e, eff }); return; }
     const H = salNum(eff.hourlyRate);
-    if (H <= 0) return; // 尚未設定時薪的員工略過（如留白者）
-    const carWash = randInt(600, 900);
-    const N = pickShiftCount(H, carWash, salNum(eff.dutyAllowance), salNum(eff.specialBonus), salNum(eff.laborIns), salNum(eff.healthIns));
-    const shifts = genShifts(N);
-    const totalHours = salRound2(shifts.length * 7.5);
-    const rec = { ...eff, workHours: totalHours, otHours: 0, carWash };
-    rows.push({ e, rec, shifts, chief: false, totalHours });
+    if (H <= 0) return; // 尚未設定時薪者略過
+    workerRows.push({ e, eff, H });
   });
 
-  // 申報打卡紀錄：每位非站長員工一張卡片，排成格狀擺入同一張 A4（沿用卡片框線樣式）
-  const pcards = rows.filter((r) => r.shifts).map((r) => {
-    const trs = r.shifts.map((s) => `<tr><td>${month}/${s.day}</td><td>${s.wd}</td><td>${s.type}</td><td>${s.inT}</td><td>${s.outT}</td></tr>`).join("");
-    return `<div class="pcard"><div class="pc-h">${esc(r.e.name)}</div>
+  // 指派固定班別：交錯分早/晚，人數 >= 2 時各至少 1 人
+  workerRows.forEach((w, i) => { w.shift = (i % 2 === 0) ? "早" : "晚"; });
+
+  // 各人工作天數 W 與洗車獎金；盡量讓實發金額不重複
+  const usedNet = new Set();
+  workerRows.forEach((w) => {
+    const duty = salNum(w.eff.dutyAllowance), special = salNum(w.eff.specialBonus);
+    const labor = salNum(w.eff.laborIns), health = salNum(w.eff.healthIns);
+    let W = 0, carWash = 0, net = 0, tries = 0;
+    do {
+      carWash = randInt(600, 900);
+      const fixed = carWash + duty + special - labor - health;
+      W = workdaysFor(w.H, fixed);
+      net = Math.ceil((7.5 * W * w.H + carWash + duty + special - labor - health) / 100) * 100;
+      tries++;
+    } while (usedNet.has(net) && tries < 80);
+    usedNet.add(net);
+    w.W = W; w.carWash = carWash;
+    w.work = new Array(daysInMonth + 1).fill(true); // 1-based；true=工作
+  });
+
+  const groups = { 早: workerRows.filter((w) => w.shift === "早"), 晚: workerRows.filter((w) => w.shift === "晚") };
+  const countWorking = (grp, d) => grp.reduce((s, w) => s + (w.work[d] ? 1 : 0), 0);
+
+  // 依 R=休息天數，均勻挑休息日、依組內序號錯開起點（不同人休不同天，維持覆蓋）
+  const assignRest = (arr, W, offset) => {
+    const R = daysInMonth - W;
+    if (R <= 0) return;
+    const rests = new Set();
+    for (let i = 0; i < R; i++) {
+      let pos = (Math.floor(i * daysInMonth / R) + offset) % daysInMonth + 1;
+      let guard = 0;
+      while (rests.has(pos) && guard < daysInMonth) { pos = (pos % daysInMonth) + 1; guard++; }
+      rests.add(pos);
+    }
+    rests.forEach((p) => { arr[p] = false; });
+  };
+  ["早", "晚"].forEach((k) => groups[k].forEach((w, gi) =>
+    assignRest(w.work, w.W, groups[k].length ? Math.floor(gi * daysInMonth / groups[k].length) : 0)));
+
+  // 覆蓋修補：每天每班別至少 1 人。若某天某組全休，挑一位當天休息者改上班，
+  // 並把他另一個「當天仍有同事上班」的工作日改休（維持工作天數不變）。
+  ["早", "晚"].forEach((k) => {
+    const grp = groups[k];
+    if (!grp.length) return;
+    for (let d = 1; d <= daysInMonth; d++) {
+      let guard = 0;
+      while (countWorking(grp, d) === 0 && guard++ < grp.length * 2) {
+        const w = grp.find((x) => !x.work[d]);
+        if (!w) break;
+        let d2 = -1;
+        for (let j = 1; j <= daysInMonth; j++) { if (w.work[j] && countWorking(grp, j) >= 2) { d2 = j; break; } }
+        w.work[d] = true;
+        if (d2 > 0) w.work[d2] = false;
+      }
+    }
+  });
+
+  // 連上修補：任何人不得連續上班 7 天以上。把連續段中的第 7 天改休，另找一個休息日補班（維持天數）。
+  ["早", "晚"].forEach((k) => groups[k].forEach((w) => {
+    for (let pass = 0; pass < 6; pass++) {
+      let run = 0, broke = false;
+      for (let d = 1; d <= daysInMonth; d++) {
+        if (w.work[d]) {
+          run++;
+          if (run >= 7 && (countWorking(groups[k], d) >= 2 || groups[k].length === 1)) {
+            w.work[d] = false;
+            for (let j = 1; j <= daysInMonth; j++) { if (!w.work[j] && j !== d) { w.work[j] = true; break; } }
+            broke = true; break;
+          }
+        } else run = 0;
+      }
+      if (!broke) break;
+    }
+  }));
+
+  // 站長：月休 7 天（其餘上日班），依序號錯開
+  chiefRows.forEach((c, ci) => {
+    c.work = new Array(daysInMonth + 1).fill(true);
+    assignRest(c.work, daysInMonth - 7, ci * 3);
+    c.shift = "日";
+  });
+
+  // 依原本員工順序組出輸出列（申報用薪資紀錄）
+  const byId = {};
+  chiefRows.forEach((c) => {
+    // 申報用：站長職務加級改 5000、特別獎金 0（工作時數維持月薪制 1）
+    byId[c.e.id] = { e: c.e, rec: { ...c.eff, dutyAllowance: 5000, specialBonus: 0 }, work: c.work, shift: "日", chief: true };
+  });
+  workerRows.forEach((w) => {
+    const days = w.work.reduce((s, x, i) => s + (i >= 1 && x ? 1 : 0), 0);
+    const totalHours = salRound2(days * SHIFTS[w.shift].h);
+    byId[w.e.id] = { e: w.e, rec: { ...w.eff, workHours: totalHours, otHours: 0, carWash: w.carWash }, work: w.work, shift: w.shift, chief: false };
+  });
+  const outRows = list.map((e) => byId[e.id]).filter(Boolean);
+
+  // 申報打卡紀錄：每位員工（含站長）一張卡片，格狀擺入同一張 A4（沿用卡片框線樣式）
+  const pcards = outRows.map((r) => {
+    const sdef = SHIFTS[r.shift];
+    const days = [];
+    for (let d = 1; d <= daysInMonth; d++) if (r.work[d]) days.push(d);
+    const trs = days.map((d) => `<tr><td>${month}/${d}</td><td>${dow(d)}</td><td>${r.shift}</td><td>${sdef.inT}</td><td>${sdef.outT}</td></tr>`).join("");
+    const totalH = salRound2(days.length * sdef.h);
+    return `<div class="pcard"><div class="pc-h">${esc(r.e.name)}（${r.chief ? "站長" : r.shift + "班"}）</div>
 <table class="pct"><thead><tr><th>日期</th><th>週</th><th>班</th><th>上班</th><th>下班</th></tr></thead>
 <tbody>${trs}</tbody>
-<tfoot><tr><th colspan="4">合計</th><td>${r.totalHours}h</td></tr></tfoot></table></div>`;
+<tfoot><tr><th colspan="4">合計 ${days.length} 天</th><td>${totalH}h</td></tr></tfoot></table></div>`;
   }).join("");
 
-  // 申報薪資表（全部：站長月薪＋非站長申報工時），沿用薪資單卡片版面
-  const scards = rows.map((r, i) => {
+  // 申報薪資表（全部：站長＋時薪員工），沿用薪資單卡片版面
+  const scards = outRows.map((r, i) => {
     const rec = r.rec; const cc = salaryCalc(rec);
     const items = [
       ["序號", i + 1], ["職務", rec.position || "一般"], ["姓名", r.e.name],
@@ -2429,9 +2508,11 @@ function DeclarationPanel({ employees, salary, punches, multiplier, overrides })
     <div style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, marginBottom: 14 }}>
       <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 8 }}>申報薪資表</div>
       <div style={{ fontSize: 11, color: COLORS.textFaint, lineHeight: 1.6, marginBottom: 10 }}>
-        按下後會依所選月份，為<b>站長以外</b>的員工排出班表：早班 <b>06:00–13:30</b>、晚班 <b>13:30–21:00</b>（每 6 天 3 早 3 晚），
-        並自動調整上班天數，使<b>實發薪資落在 29500~33000</b>、洗車獎金隨機 <b>600~900</b>。開啟可列印的「<b>申報打卡紀錄</b>（卡片格狀排入同一張 A4）＋
-        <b>薪資總表</b>」。此功能<b>只產生報表、不會更動任何已儲存的設定或資料</b>；每按一次都是重新隨機。
+        按下後依所選月份排出申報班表：站長以外每人<b>固定</b>上早班 <b>06:00–13:30</b> 或晚班 <b>13:30–21:00</b>；
+        保證<b>每天每個班別都至少 1 人</b>、且<b>無人連續上班 7 天以上</b>；自動調整上班天數使<b>實發薪資落在 29500~33000</b>、
+        洗車獎金隨機 <b>600~900</b>、金額盡量不重複。站長<b>月休 7 天</b>（其餘上日班 09:00–18:00），申報用職務加級 <b>5000</b>、無特別獎金。
+        開啟可列印的「<b>申報打卡紀錄</b>（含站長、卡片格狀排入同一張 A4）＋<b>薪資總表</b>」。
+        <b>只產生報表、不更動任何已儲存資料</b>；每按一次重新隨機。
       </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
         <select value={month} onChange={(e) => setMonth(Number(e.target.value))} style={selStyle}>
