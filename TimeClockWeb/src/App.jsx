@@ -1566,7 +1566,7 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
     });
   };
 
-  // 全員薪資總表：比照原本 Excel「列印」分頁——每位員工一張直式薪資單、並排成格狀，A4 一次印出（也可存 PDF）
+  // 全員薪資總表：比照原本 Excel「列印」分頁——每位員工一張直式薪資單、並排成格狀，A4 直式一次印出（也可存 PDF）
   const printSalarySummary = () => {
     const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const cards = employees.map((e, i) => {
@@ -1578,21 +1578,21 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
         ["加班時數", num(rec.otHours)], ["加班時薪", num(rec.otRate)],
         ["洗車獎金", num(rec.carWash)], ["職務加級", num(rec.dutyAllowance)], ["特別獎金", num(rec.specialBonus)],
         ["應發金額", cc.gross, "hl"], ["勞保", num(rec.laborIns)], ["健保", num(rec.healthIns)], ["借支", num(rec.advance)],
-        ["實發金額", cc.netRounded, "hl"], ["簽章", ""],
+        ["實發金額", cc.net], ["簽章", ""], ["備註", cc.netRounded, "hl"],
       ];
       const trs = rows.map(([k, v, cls]) => `<tr class="${cls || ""}"><th>${esc(k)}</th><td>${v === "" ? "&nbsp;" : esc(v)}</td></tr>`).join("");
       return `<table class="card">${trs}</table>`;
     }).join("");
     const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>${year}年${month}月薪資表</title>
 <style>
-@page { size: A4 landscape; margin: 6mm; }
+@page { size: A4 portrait; margin: 8mm; }
 * { box-sizing: border-box; }
 body { font-family: "Microsoft JhengHei","PingFang TC","Heiti TC",sans-serif; color:#111; margin:0; padding:6px; }
-h1 { font-size:15px; text-align:center; margin:2px 0 8px; }
-.grid { display:grid; grid-template-columns: repeat(5, 1fr); gap:6px; }
-table.card { border-collapse:collapse; width:100%; font-size:9.5px; page-break-inside:avoid; }
-table.card th, table.card td { border:1px solid #333; padding:2px 5px; line-height:1.35; }
-table.card th { background:#eee; text-align:left; font-weight:normal; white-space:nowrap; width:46%; }
+h1 { font-size:17px; text-align:center; margin:2px 0 10px; }
+.grid { display:grid; grid-template-columns: repeat(5, 1fr); gap:5px; }
+table.card { border-collapse:collapse; width:100%; font-size:12px; page-break-inside:avoid; }
+table.card th, table.card td { border:1px solid #333; padding:3px 4px; line-height:1.4; }
+table.card th { background:#eee; text-align:left; font-weight:normal; white-space:nowrap; width:50%; }
 table.card td { text-align:right; font-variant-numeric:tabular-nums; }
 table.card tr.hl th, table.card tr.hl td { font-weight:bold; background:#f3f3f3; }
 .noprint { text-align:center; margin-top:12px; }
