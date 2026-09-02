@@ -396,8 +396,10 @@ export default function TimeClockApp() {
   const toastTimer = useRef(null);
   // 有本機打卡紀錄正在背景寫回試算表時設為 true，讓輪詢暫時不要用伺服器舊資料覆蓋掉剛改的內容
   const punchesWriteInFlight = useRef(false);
-  // 員工清單正在背景寫回時設 true，讓輪詢暫時不要覆蓋（避免新增/移除/排序被閃回舊資料）
-  const employeesWriteInFlight = useRef(false);
+  // 剛在本機改過員工清單（新增/移除/排序）時，記錄「我們寫進去的內容簽章 + 時間」。
+  // 在伺服器回傳的資料確認等於這份內容之前，輪詢一律忽略伺服器的員工清單，
+  // 避免「改動前就已送出、卻比較晚才回來」的輪詢把剛存好的順序又蓋回舊的（順序閃回 bug）。
+  const employeesPending = useRef(null);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -452,7 +454,20 @@ export default function TimeClockApp() {
       Array.isArray(next) && next.length === 0 && Array.isArray(prev) && prev.length > 0 ? prev : next;
 
     const emp = parse(raw.employees, []);
-    if (emp !== undefined && !employeesWriteInFlight.current) setEmployees((prev) => keepIfTransientEmpty(emp, prev));
+    if (emp !== undefined) {
+      const pend = employeesPending.current;
+      if (pend && Date.now() - pend.at < 15000) {
+        // 尚有未確認的本機寫入：只有當伺服器資料「等於我們寫的內容」時才接受並解除等待；
+        // 否則視為較舊的輪詢回應，忽略之，維持畫面上剛存好的順序。
+        if (JSON.stringify(emp) === pend.sig) {
+          employeesPending.current = null;
+          setEmployees((prev) => keepIfTransientEmpty(emp, prev));
+        }
+      } else {
+        if (pend) employeesPending.current = null; // 超過 15 秒仍未確認，放棄等待，恢復同步
+        setEmployees((prev) => keepIfTransientEmpty(emp, prev));
+      }
+    }
 
     const pun = parse(raw.punches, []);
     // 若有本機打卡編輯正在背景寫回，暫時不要用伺服器資料覆蓋，避免剛改的內容閃回舊值
@@ -517,14 +532,15 @@ export default function TimeClockApp() {
   }, [employees, sessionChecked]);
 
   const saveEmployees = async (next) => {
+    const payload = JSON.stringify(next);
     setEmployees(next);
-    employeesWriteInFlight.current = true;
+    // 先記下這份內容的簽章；在輪詢讀到伺服器已同步成這份之前，都不讓舊的輪詢回應覆蓋畫面。
+    employeesPending.current = { sig: payload, at: Date.now() };
     try {
-      await window.storage.set("employees", JSON.stringify(next), true);
+      await window.storage.set("employees", payload, true);
     } catch (e) {
+      employeesPending.current = null; // 寫入失敗，恢復接受伺服器資料
       flash("儲存帳號資料失敗，請稍後再試", "error");
-    } finally {
-      employeesWriteInFlight.current = false;
     }
   };
 
@@ -1664,10 +1680,6 @@ table.card tr.hl th, table.card tr.hl td { font-weight:bold; background:#f3f3f3;
           （未進位 {c.net.toLocaleString()}；實發為無條件進位到百元）
         </div>
       </div>
-
-      <button onClick={save} style={{ width: "100%", padding: "11px 0", borderRadius: 8, border: "none", background: COLORS.brass, color: "#20160b", fontSize: 14, fontWeight: 700, cursor: "pointer", marginBottom: 10 }}>
-        儲存本月薪資
-      </button>
 
       <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 6 }}>全員薪資總表（{year} 年 {month} 月）</div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
