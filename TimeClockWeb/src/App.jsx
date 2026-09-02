@@ -1417,8 +1417,7 @@ const SEED_DEFAULTS = {
   "何嘉玲": { position: "",   hourlyRate: 196,   otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 758,  healthIns: 470 },
   "劉祐寧": { position: "",   hourlyRate: 196,   otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 758,  healthIns: 470 },
   "藍冠秉": { position: "",   hourlyRate: 196,   otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 0,    healthIns: 0 },
-  "張清清": { position: "站長", hourlyRate: 35000, otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 1145, healthIns: 710 },
-  "林宸漢": { position: "站長", hourlyRate: 50000, otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 715,  healthIns: 447 },
+  // 張清清、林宸漢：依指示不帶任何預設（留白），由管理員自行填寫。
 };
 
 // 薪資表：選員工＋月份，工作/加班時數自動帶入該月考勤。時薪、加班時薪、勞保、健保、職務為
