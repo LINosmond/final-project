@@ -1388,6 +1388,19 @@ function SalaryTotalRow({ label, value, strong }) {
   );
 }
 
+// 原始檔案的勞保／健保初始值（依姓名對應），作為尚未設定過的員工預設。
+const SEED_INSURANCE = {
+  "許嘉晏": { laborIns: 758, healthIns: 470 },
+  "李明諺": { laborIns: 429, healthIns: 447 },
+  "林毅傑": { laborIns: 870, healthIns: 540 },
+  "韓建龍": { laborIns: 758, healthIns: 470 },
+  "何嘉玲": { laborIns: 758, healthIns: 470 },
+  "劉祐寧": { laborIns: 758, healthIns: 470 },
+  "藍冠秉": { laborIns: 0, healthIns: 0 },
+  "張清清": { laborIns: 1145, healthIns: 710 },
+  "林宸漢": { laborIns: 715, healthIns: 447 },
+};
+
 // 薪資表：選員工＋月份，工作/加班時數自動帶入該月考勤。時薪、加班時薪、勞保、健保、職務為
 // 「每位員工的固定設定」（存一次後每月自動預設）；洗車獎金等每月變動項目逐月填。
 function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSaveSalary }) {
@@ -1423,6 +1436,10 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
     const att = hoursOf(e);
     const saved = empSal[ym];
     const d = empSal.defaults || {};
+    // 依姓名帶入原始檔案的勞健保初始值（尚未存過任何預設時使用；之後儲存就以儲存的為準）
+    const seed = SEED_INSURANCE[e.name] || {};
+    const dLabor = d.laborIns != null ? d.laborIns : (seed.laborIns != null ? seed.laborIns : 0);
+    const dHealth = d.healthIns != null ? d.healthIns : (seed.healthIns != null ? seed.healthIns : 0);
     const pos = saved && saved.position != null ? saved.position : (d.position || "");
     const chief = pos === "站長"; // 站長＝月薪制：時數 1、時薪＝月薪、無時薪加班
     if (saved) {
@@ -1435,8 +1452,8 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
         carWash: saved.carWash || 0,
         dutyAllowance: saved.dutyAllowance != null ? saved.dutyAllowance : (d.dutyAllowance || 0),
         specialBonus: saved.specialBonus != null ? saved.specialBonus : (d.specialBonus || 0),
-        laborIns: saved.laborIns != null ? saved.laborIns : (d.laborIns || 0),
-        healthIns: saved.healthIns != null ? saved.healthIns : (d.healthIns || 0),
+        laborIns: saved.laborIns != null ? saved.laborIns : dLabor,
+        healthIns: saved.healthIns != null ? saved.healthIns : dHealth,
         advance: saved.advance || 0,
       };
     }
@@ -1446,7 +1463,7 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
       workHours: chief ? 1 : att.work, hourlyRate: rate,
       otHours: chief ? 0 : att.ot, otRate: d.otRate != null ? d.otRate : (rate ? Math.round(rate * multiplier) : 0),
       carWash: 0, dutyAllowance: d.dutyAllowance || 0, specialBonus: d.specialBonus || 0,
-      laborIns: d.laborIns || 0, healthIns: d.healthIns || 0, advance: 0,
+      laborIns: dLabor, healthIns: dHealth, advance: 0,
     };
   };
 
