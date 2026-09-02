@@ -1587,13 +1587,14 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
 <style>
 @page { size: A4 portrait; margin: 8mm; }
 * { box-sizing: border-box; }
-body { font-family: "Microsoft JhengHei","PingFang TC","Heiti TC",sans-serif; color:#111; margin:0; padding:6px; }
-h1 { font-size:17px; text-align:center; margin:2px 0 10px; }
-.grid { display:grid; grid-template-columns: repeat(5, 1fr); gap:5px; }
-table.card { border-collapse:collapse; width:100%; font-size:12px; page-break-inside:avoid; }
+body { font-family: "Microsoft JhengHei","PingFang TC","Heiti TC",sans-serif; color:#111; margin:0; padding:6px; font-weight:bold; }
+h1 { font-size:17px; text-align:center; margin:2px 0 10px; font-weight:bold; }
+/* 拉長到滿版：整個格狀區佔滿一頁高度，兩列各半，卡片高度撐滿 */
+.grid { display:grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(2, 1fr); gap:5px; height:262mm; }
+table.card { border-collapse:collapse; width:100%; height:100%; font-size:12px; font-weight:bold; page-break-inside:avoid; }
 table.card th, table.card td { border:1px solid #333; padding:3px 4px; line-height:1.4; }
-table.card th { background:#eee; text-align:left; font-weight:normal; white-space:nowrap; width:50%; }
-table.card td { text-align:right; font-variant-numeric:tabular-nums; }
+table.card th { background:#eee; text-align:left; font-weight:bold; white-space:nowrap; width:50%; }
+table.card td { text-align:right; font-variant-numeric:tabular-nums; font-weight:bold; }
 table.card tr.hl th, table.card tr.hl td { font-weight:bold; background:#f3f3f3; }
 .noprint { text-align:center; margin-top:12px; }
 @media print { .noprint { display:none; } }
