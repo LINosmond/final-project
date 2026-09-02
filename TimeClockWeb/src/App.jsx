@@ -1521,26 +1521,35 @@ function openDeclarationPrint(list, salary, punches, year, month, multiplier, ov
   const daysInMonth = new Date(year, month, 0).getDate();
 
   // 依申報總時數 T（整數），排出每日班表：跳過週日，均勻挑約 T/8 天，每天 8 小時再微調餘數
-  const genSchedule = (T) => {
-    const workdays = [];
-    for (let d = 1; d <= daysInMonth; d++) {
-      if (new Date(year, month - 1, d).getDay() !== 0) workdays.push(d);
-    }
-    let D = Math.max(1, Math.min(Math.round(T / 8), workdays.length));
-    const step = workdays.length / D;
+  // 收集當月工作日（跳過週日）
+  const WDdays = [];
+  for (let d = 1; d <= daysInMonth; d++) {
+    const g = new Date(year, month - 1, d).getDay();
+    if (g !== 0) WDdays.push({ day: d, wd: WD[g] });
+  }
+  const maxDays = WDdays.length;
+
+  // 依「目標實發薪資」挑出 7.5 小時班的天數 N，使實發薪資落在 29500~33000。
+  // 每個 7.5 小時班對薪資的貢獻＝7.5×時薪；固定項＝洗車獎金＋職務加級＋特別獎金－勞保－健保。
+  const pickShiftCount = (H, carWash, duty, special, labor, health) => {
+    const fixed = carWash + duty + special - labor - health;
+    const per = 7.5 * H;
+    const lo = Math.max(6, Math.ceil((29500 - fixed) / per));
+    const hi = Math.min(maxDays, Math.floor((33000 - fixed) / per));
+    if (hi < lo) return Math.min(lo, maxDays); // 極端情況（範圍容不下一個班）保底
+    return lo + Math.floor(Math.random() * (hi - lo + 1));
+  };
+
+  // 排出 N 天班表：早班 06:00–13:30、晚班 13:30–21:00（各 7.5 小時），
+  // 每 6 個工作日排「3 早 3 晚」，工作日均勻分布於整個月、跳過週日。
+  const genShifts = (N) => {
+    N = Math.max(1, Math.min(N, maxDays));
+    const step = maxDays / N;
     const chosen = [];
-    for (let i = 0; i < D; i++) chosen.push(workdays[Math.floor(i * step)]);
-    const hours = chosen.map(() => 8);
-    let rem = T - 8 * chosen.length;
-    const order = chosen.map((_, i) => i);
-    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
-    let oi = 0, guard = 0;
-    while (rem !== 0 && guard++ < order.length * 6) {
-      const k = order[oi % order.length]; oi++;
-      if (rem > 0 && hours[k] < 10) { hours[k] += 1; rem--; }
-      else if (rem < 0 && hours[k] > 5) { hours[k] -= 1; rem++; }
-    }
-    return chosen.map((d, i) => ({ day: d, h: hours[i] }));
+    for (let i = 0; i < N; i++) chosen.push(WDdays[Math.floor(i * step)]);
+    return chosen.map((w, i) => ((i % 6) < 3
+      ? { ...w, type: "早", inT: "06:00", outT: "13:30" }
+      : { ...w, type: "晚", inT: "13:30", outT: "21:00" }));
   };
 
   // 逐位員工組出「申報用」的薪資紀錄與班表
@@ -1548,28 +1557,24 @@ function openDeclarationPrint(list, salary, punches, year, month, multiplier, ov
   list.forEach((e) => {
     const eff = salaryEffectiveRecord(e, salary, punches, year, month, multiplier, overrides);
     const chief = eff.position === "站長";
-    if (chief) {
-      rows.push({ e, rec: eff, sched: null, chief: true });
-    } else {
-      if (salNum(eff.hourlyRate) <= 0) return; // 尚未設定時薪的員工略過（如留白者）
-      const T = randInt(154, 163);
-      const carWash = randInt(600, 900);
-      const rec = { ...eff, workHours: T, otHours: 0, carWash };
-      rows.push({ e, rec, sched: genSchedule(T), chief: false, T });
-    }
+    if (chief) { rows.push({ e, rec: eff, shifts: null, chief: true }); return; } // 站長月薪制，不排班
+    const H = salNum(eff.hourlyRate);
+    if (H <= 0) return; // 尚未設定時薪的員工略過（如留白者）
+    const carWash = randInt(600, 900);
+    const N = pickShiftCount(H, carWash, salNum(eff.dutyAllowance), salNum(eff.specialBonus), salNum(eff.laborIns), salNum(eff.healthIns));
+    const shifts = genShifts(N);
+    const totalHours = salRound2(shifts.length * 7.5);
+    const rec = { ...eff, workHours: totalHours, otHours: 0, carWash };
+    rows.push({ e, rec, shifts, chief: false, totalHours });
   });
 
-  // 申報打卡紀錄（只列非站長、有班表者），兩欄並排
-  const tcards = rows.filter((r) => r.sched).map((r) => {
-    const trs = r.sched.map((s) => {
-      const wd = WD[new Date(year, month - 1, s.day).getDay()];
-      const out = pad2(9 + s.h) + ":00";
-      return `<tr><td>${month}/${s.day}</td><td>${wd}</td><td>09:00</td><td>${out}</td><td>${s.h}</td></tr>`;
-    }).join("");
-    return `<div class="tc"><div class="tc-h">${esc(r.e.name)}　${year} 年 ${month} 月　申報工時 ${r.T} 小時</div>
-<table class="tct"><thead><tr><th>日期</th><th>星期</th><th>上班</th><th>下班</th><th>時數</th></tr></thead>
+  // 申報打卡紀錄：每位非站長員工一張卡片，排成格狀擺入同一張 A4（沿用卡片框線樣式）
+  const pcards = rows.filter((r) => r.shifts).map((r) => {
+    const trs = r.shifts.map((s) => `<tr><td>${month}/${s.day}</td><td>${s.wd}</td><td>${s.type}</td><td>${s.inT}</td><td>${s.outT}</td></tr>`).join("");
+    return `<div class="pcard"><div class="pc-h">${esc(r.e.name)}</div>
+<table class="pct"><thead><tr><th>日期</th><th>週</th><th>班</th><th>上班</th><th>下班</th></tr></thead>
 <tbody>${trs}</tbody>
-<tfoot><tr><th colspan="4">合計</th><td>${r.T}</td></tr></tfoot></table></div>`;
+<tfoot><tr><th colspan="4">合計</th><td>${r.totalHours}h</td></tr></tfoot></table></div>`;
   }).join("");
 
   // 申報薪資表（全部：站長月薪＋非站長申報工時），沿用薪資單卡片版面
@@ -1594,13 +1599,13 @@ function openDeclarationPrint(list, salary, punches, year, month, multiplier, ov
 body { font-family:"Microsoft JhengHei","PingFang TC","Heiti TC",sans-serif; color:#111; margin:0; padding:6px; font-weight:bold; }
 h1 { font-size:17px; text-align:center; margin:2px 0 8px; font-weight:bold; }
 .sec { page-break-before: always; }
-.tcgrid { display:grid; grid-template-columns: repeat(2, 1fr); gap:10px 16px; }
-.tc { page-break-inside:avoid; }
-.tc-h { font-size:13px; margin:0 0 3px; }
-table.tct { border-collapse:collapse; width:100%; font-size:12px; }
-table.tct th, table.tct td { border:1px solid #333; padding:2px 4px; text-align:center; }
-table.tct thead th { background:#eee; }
-table.tct tfoot th, table.tct tfoot td { background:#f3f3f3; }
+.pgrid { display:grid; grid-template-columns: repeat(3, 1fr); gap:8px 10px; }
+.pcard { page-break-inside:avoid; }
+.pc-h { font-size:12px; text-align:center; margin:0 0 2px; }
+table.pct { border-collapse:collapse; width:100%; font-size:9.5px; }
+table.pct th, table.pct td { border:1px solid #333; padding:1px 2px; text-align:center; line-height:1.25; }
+table.pct thead th { background:#eee; }
+table.pct tfoot th, table.pct tfoot td { background:#f3f3f3; }
 .grid { display:grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(2, 1fr); column-gap:14px; row-gap:16px; height:250mm; }
 table.card { border-collapse:collapse; width:100%; height:100%; font-size:14px; font-weight:bold; page-break-inside:avoid; }
 table.card th, table.card td { border:1px solid #333; padding:3px 3px; line-height:1.4; text-align:center; }
@@ -1612,7 +1617,7 @@ table.card tr.hl th, table.card tr.hl td { background:#f3f3f3; }
 </style></head>
 <body>
 <h1>${year} 年 ${month} 月　申報打卡紀錄</h1>
-<div class="tcgrid">${tcards || '<div>（無可申報的時薪員工）</div>'}</div>
+<div class="pgrid">${pcards || '<div>（無可申報的時薪員工）</div>'}</div>
 <div class="sec"><h1>${year} 年 ${month} 月　申報薪資表</h1><div class="grid">${scards}</div></div>
 <div class="noprint"><button onclick="window.print()" style="padding:8px 22px;font-size:14px;cursor:pointer;">列印 / 存成 PDF</button></div>
 <script>window.onload=function(){setTimeout(function(){try{window.print();}catch(e){}},400);};</script>
@@ -2424,9 +2429,9 @@ function DeclarationPanel({ employees, salary, punches, multiplier, overrides })
     <div style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, marginBottom: 14 }}>
       <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 8 }}>申報薪資表</div>
       <div style={{ fontSize: 11, color: COLORS.textFaint, lineHeight: 1.6, marginBottom: 10 }}>
-        按下後會依所選月份，將<b>站長以外</b>的員工申報工時隨機設為 <b>154~163 小時</b>、洗車獎金隨機 <b>600~900</b>，
-        並開啟可列印的「<b>申報打卡紀錄</b>＋<b>薪資列表</b>」。此功能<b>只產生報表、不會更動任何已儲存的設定或資料</b>；
-        每按一次都是重新隨機。
+        按下後會依所選月份，為<b>站長以外</b>的員工排出班表：早班 <b>06:00–13:30</b>、晚班 <b>13:30–21:00</b>（每 6 天 3 早 3 晚），
+        並自動調整上班天數，使<b>實發薪資落在 29500~33000</b>、洗車獎金隨機 <b>600~900</b>。開啟可列印的「<b>申報打卡紀錄</b>（卡片格狀排入同一張 A4）＋
+        <b>薪資總表</b>」。此功能<b>只產生報表、不會更動任何已儲存的設定或資料</b>；每按一次都是重新隨機。
       </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
         <select value={month} onChange={(e) => setMonth(Number(e.target.value))} style={selStyle}>
