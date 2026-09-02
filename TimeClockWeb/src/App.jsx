@@ -1451,6 +1451,177 @@ const SEED_DEFAULTS = {
   // 張清清、林宸漢：依指示不帶任何預設（留白），由管理員自行填寫。
 };
 
+// ===== 薪資計算共用函式（模組層級純函式，供薪資表與「申報薪資表」共用同一套邏輯）=====
+const salNum = (x) => { const n = Number(x); return isFinite(n) ? n : 0; };
+const salRound2 = (n) => Math.round(n * 100) / 100;
+
+function salaryHoursOf(e, punches, year, month, multiplier, overrides) {
+  const rows = computeMonthRows(e, punches, year, month, multiplier, overrides);
+  const bMin = rows.reduce((s, r) => s + (r.isHoliday ? r.subtotalMin * 2 : r.subtotalMin - r.otMin), 0);
+  const oMin = rows.reduce((s, r) => s + r.otMin, 0);
+  return { work: salRound2(bMin / 60), ot: salRound2(oMin / 60) };
+}
+
+// 取某位員工某月的「有效薪資紀錄」：已存過該月用該月；否則用固定設定 defaults／SEED 預設＋當月考勤時數。
+function salaryEffectiveRecord(e, salary, punches, year, month, multiplier, overrides) {
+  const ym = `${year}-${pad2(month)}`;
+  const empSal = (salary || {})[e.id] || {};
+  const att = salaryHoursOf(e, punches, year, month, multiplier, overrides);
+  const saved = empSal[ym];
+  const d = empSal.defaults || {};
+  const seed = SEED_DEFAULTS[e.name] || {};
+  const pick = (dv, sv, fb) => (dv != null ? dv : (sv != null ? sv : fb));
+  const dLabor = pick(d.laborIns, seed.laborIns, 0);
+  const dHealth = pick(d.healthIns, seed.healthIns, 0);
+  const dHourly = pick(d.hourlyRate, seed.hourlyRate, 0);
+  const dDuty = pick(d.dutyAllowance, seed.dutyAllowance, 0);
+  const dSpecial = pick(d.specialBonus, seed.specialBonus, 0);
+  const dPos = pick(d.position, seed.position, "");
+  const pos = saved && saved.position != null ? saved.position : dPos;
+  const chief = pos === "站長";
+  const dOtRate = pick(d.otRate, seed.otRate, (dHourly ? Math.round(dHourly * multiplier) : 0));
+  if (saved) {
+    return {
+      position: pos,
+      workHours: saved.workHours != null ? saved.workHours : (chief ? 1 : att.work),
+      hourlyRate: saved.hourlyRate != null ? saved.hourlyRate : dHourly,
+      otHours: saved.otHours != null ? saved.otHours : (chief ? 0 : att.ot),
+      otRate: saved.otRate != null ? saved.otRate : dOtRate,
+      carWash: saved.carWash || 0,
+      dutyAllowance: saved.dutyAllowance != null ? saved.dutyAllowance : dDuty,
+      specialBonus: saved.specialBonus != null ? saved.specialBonus : dSpecial,
+      laborIns: saved.laborIns != null ? saved.laborIns : dLabor,
+      healthIns: saved.healthIns != null ? saved.healthIns : dHealth,
+      advance: saved.advance || 0,
+    };
+  }
+  return {
+    position: pos,
+    workHours: chief ? 1 : att.work, hourlyRate: dHourly,
+    otHours: chief ? 0 : att.ot, otRate: dOtRate,
+    carWash: 0, dutyAllowance: dDuty, specialBonus: dSpecial,
+    laborIns: dLabor, healthIns: dHealth, advance: 0,
+  };
+}
+
+function salaryCalc(rec) {
+  const gross = salNum(rec.workHours) * salNum(rec.hourlyRate) + salNum(rec.otHours) * salNum(rec.otRate)
+    + salNum(rec.carWash) + salNum(rec.dutyAllowance) + salNum(rec.specialBonus);
+  const net = gross - salNum(rec.laborIns) - salNum(rec.healthIns) - salNum(rec.advance);
+  return { gross, net, netRounded: Math.ceil(net / 100) * 100 };
+}
+
+// ===== 申報薪資表：只產生「可列印」的申報用打卡紀錄＋薪資列表，完全不寫入任何資料 =====
+// 站長以外的員工：把當月「申報工時」隨機設為 154~163 小時、洗車獎金隨機 600~900；
+// 並據此排出一份合理的每日班表（09:00 上班，時數落在 7~9 小時）。站長維持月薪制原樣。
+function openDeclarationPrint(list, salary, punches, year, month, multiplier, overrides) {
+  const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const randInt = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+  const WD = ["日", "一", "二", "三", "四", "五", "六"];
+  const daysInMonth = new Date(year, month, 0).getDate();
+
+  // 依申報總時數 T（整數），排出每日班表：跳過週日，均勻挑約 T/8 天，每天 8 小時再微調餘數
+  const genSchedule = (T) => {
+    const workdays = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      if (new Date(year, month - 1, d).getDay() !== 0) workdays.push(d);
+    }
+    let D = Math.max(1, Math.min(Math.round(T / 8), workdays.length));
+    const step = workdays.length / D;
+    const chosen = [];
+    for (let i = 0; i < D; i++) chosen.push(workdays[Math.floor(i * step)]);
+    const hours = chosen.map(() => 8);
+    let rem = T - 8 * chosen.length;
+    const order = chosen.map((_, i) => i);
+    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+    let oi = 0, guard = 0;
+    while (rem !== 0 && guard++ < order.length * 6) {
+      const k = order[oi % order.length]; oi++;
+      if (rem > 0 && hours[k] < 10) { hours[k] += 1; rem--; }
+      else if (rem < 0 && hours[k] > 5) { hours[k] -= 1; rem++; }
+    }
+    return chosen.map((d, i) => ({ day: d, h: hours[i] }));
+  };
+
+  // 逐位員工組出「申報用」的薪資紀錄與班表
+  const rows = [];
+  list.forEach((e) => {
+    const eff = salaryEffectiveRecord(e, salary, punches, year, month, multiplier, overrides);
+    const chief = eff.position === "站長";
+    if (chief) {
+      rows.push({ e, rec: eff, sched: null, chief: true });
+    } else {
+      if (salNum(eff.hourlyRate) <= 0) return; // 尚未設定時薪的員工略過（如留白者）
+      const T = randInt(154, 163);
+      const carWash = randInt(600, 900);
+      const rec = { ...eff, workHours: T, otHours: 0, carWash };
+      rows.push({ e, rec, sched: genSchedule(T), chief: false, T });
+    }
+  });
+
+  // 申報打卡紀錄（只列非站長、有班表者），兩欄並排
+  const tcards = rows.filter((r) => r.sched).map((r) => {
+    const trs = r.sched.map((s) => {
+      const wd = WD[new Date(year, month - 1, s.day).getDay()];
+      const out = pad2(9 + s.h) + ":00";
+      return `<tr><td>${month}/${s.day}</td><td>${wd}</td><td>09:00</td><td>${out}</td><td>${s.h}</td></tr>`;
+    }).join("");
+    return `<div class="tc"><div class="tc-h">${esc(r.e.name)}　${year} 年 ${month} 月　申報工時 ${r.T} 小時</div>
+<table class="tct"><thead><tr><th>日期</th><th>星期</th><th>上班</th><th>下班</th><th>時數</th></tr></thead>
+<tbody>${trs}</tbody>
+<tfoot><tr><th colspan="4">合計</th><td>${r.T}</td></tr></tfoot></table></div>`;
+  }).join("");
+
+  // 申報薪資表（全部：站長月薪＋非站長申報工時），沿用薪資單卡片版面
+  const scards = rows.map((r, i) => {
+    const rec = r.rec; const cc = salaryCalc(rec);
+    const items = [
+      ["序號", i + 1], ["職務", rec.position || "一般"], ["姓名", r.e.name],
+      ["工作時數", salNum(rec.workHours)], ["時薪單價", salNum(rec.hourlyRate)],
+      ["加班時數", salNum(rec.otHours)], ["加班時薪", salNum(rec.otRate)],
+      ["洗車獎金", salNum(rec.carWash)], ["職務加級", salNum(rec.dutyAllowance)], ["特別獎金", salNum(rec.specialBonus)],
+      ["應發金額", cc.gross, "hl"], ["勞保", salNum(rec.laborIns)], ["健保", salNum(rec.healthIns)], ["借支", salNum(rec.advance)],
+      ["實發金額", cc.net], ["簽章", ""], ["備註", cc.netRounded, "hl"],
+    ];
+    const trs = items.map(([k, v, cls]) => `<tr class="${cls || ""}"><th>${esc(k)}</th><td>${v === "" ? "&nbsp;" : esc(v)}</td></tr>`).join("");
+    return `<table class="card">${trs}</table>`;
+  }).join("");
+
+  const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>${year}年${month}月申報薪資表</title>
+<style>
+@page { size: A4 portrait; margin: 8mm; }
+* { box-sizing: border-box; }
+body { font-family:"Microsoft JhengHei","PingFang TC","Heiti TC",sans-serif; color:#111; margin:0; padding:6px; font-weight:bold; }
+h1 { font-size:17px; text-align:center; margin:2px 0 8px; font-weight:bold; }
+.sec { page-break-before: always; }
+.tcgrid { display:grid; grid-template-columns: repeat(2, 1fr); gap:10px 16px; }
+.tc { page-break-inside:avoid; }
+.tc-h { font-size:13px; margin:0 0 3px; }
+table.tct { border-collapse:collapse; width:100%; font-size:12px; }
+table.tct th, table.tct td { border:1px solid #333; padding:2px 4px; text-align:center; }
+table.tct thead th { background:#eee; }
+table.tct tfoot th, table.tct tfoot td { background:#f3f3f3; }
+.grid { display:grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(2, 1fr); column-gap:14px; row-gap:16px; height:250mm; }
+table.card { border-collapse:collapse; width:100%; height:100%; font-size:14px; font-weight:bold; page-break-inside:avoid; }
+table.card th, table.card td { border:1px solid #333; padding:3px 3px; line-height:1.4; text-align:center; }
+table.card th { background:#eee; white-space:nowrap; width:50%; }
+table.card td { font-variant-numeric:tabular-nums; }
+table.card tr.hl th, table.card tr.hl td { background:#f3f3f3; }
+.noprint { text-align:center; margin-top:12px; }
+@media print { .noprint { display:none; } }
+</style></head>
+<body>
+<h1>${year} 年 ${month} 月　申報打卡紀錄</h1>
+<div class="tcgrid">${tcards || '<div>（無可申報的時薪員工）</div>'}</div>
+<div class="sec"><h1>${year} 年 ${month} 月　申報薪資表</h1><div class="grid">${scards}</div></div>
+<div class="noprint"><button onclick="window.print()" style="padding:8px 22px;font-size:14px;cursor:pointer;">列印 / 存成 PDF</button></div>
+<script>window.onload=function(){setTimeout(function(){try{window.print();}catch(e){}},400);};</script>
+</body></html>`;
+  const w = window.open("", "_blank");
+  if (!w) { alert("請允許彈出視窗，才能開啟申報薪資表"); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+}
+
 // 薪資表：選員工＋月份，工作/加班時數自動帶入該月考勤。時薪、加班時薪、勞保、健保、職務為
 // 「每位員工的固定設定」（存一次後每月自動預設）；洗車獎金等每月變動項目逐月填。
 function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSaveSalary }) {
@@ -1845,6 +2016,7 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
 
   const settingsSection = (
     <>
+      <DeclarationPanel employees={activeEmployees} salary={salary} punches={punches} multiplier={multiplier} overrides={overrides} />
       <LocationPanel companyLocation={companyLocation} onSave={onSaveLocation} onClear={onClearLocation} busy={busy} />
       <OvertimeRatePanel multiplier={multiplier} onSave={onSaveOtMultiplier} busy={busy} />
       <BackupPanel onExport={onExportBackup} onImport={onImportBackup} busy={busy} />
@@ -2234,6 +2406,42 @@ function LocationPanel({ companyLocation, onSave, onClear, busy }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// 申報薪資表：選月份後按鈕，開啟可列印的「申報打卡紀錄＋薪資列表」（隨機工時 154~163、洗車獎金 600~900）。
+// 只產生報表、完全不更動任何已儲存資料。
+function DeclarationPanel({ employees, salary, punches, multiplier, overrides }) {
+  const today = new Date();
+  const [year, setYear] = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth() + 1);
+  const selStyle = {
+    flex: 1, padding: "8px 10px", borderRadius: 8, background: COLORS.panelRaised,
+    border: `1px solid ${COLORS.border}`, color: COLORS.text, fontSize: 13, outline: "none",
+  };
+  return (
+    <div style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, marginBottom: 14 }}>
+      <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 8 }}>申報薪資表</div>
+      <div style={{ fontSize: 11, color: COLORS.textFaint, lineHeight: 1.6, marginBottom: 10 }}>
+        按下後會依所選月份，將<b>站長以外</b>的員工申報工時隨機設為 <b>154~163 小時</b>、洗車獎金隨機 <b>600~900</b>，
+        並開啟可列印的「<b>申報打卡紀錄</b>＋<b>薪資列表</b>」。此功能<b>只產生報表、不會更動任何已儲存的設定或資料</b>；
+        每按一次都是重新隨機。
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        <select value={month} onChange={(e) => setMonth(Number(e.target.value))} style={selStyle}>
+          {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{m} 月</option>)}
+        </select>
+        <select value={year} onChange={(e) => setYear(Number(e.target.value))} style={selStyle}>
+          {[today.getFullYear() - 1, today.getFullYear(), today.getFullYear() + 1].map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+      <button
+        onClick={() => openDeclarationPrint(employees, salary, punches, year, month, multiplier, overrides)}
+        style={{ width: "100%", padding: "11px 0", borderRadius: 8, border: "none", background: COLORS.brass, color: "#20160b", fontSize: 14, fontWeight: 700, cursor: "pointer" }}
+      >
+        🖨 產生申報薪資表（可列印）
+      </button>
     </div>
   );
 }
