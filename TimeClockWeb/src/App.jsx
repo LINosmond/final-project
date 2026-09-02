@@ -400,6 +400,9 @@ export default function TimeClockApp() {
   // 在伺服器回傳的資料確認等於這份內容之前，輪詢一律忽略伺服器的員工清單，
   // 避免「改動前就已送出、卻比較晚才回來」的輪詢把剛存好的順序又蓋回舊的（順序閃回 bug）。
   const employeesPending = useRef(null);
+  // 薪資同理：本機剛存過薪資後，在伺服器確認同步成這份之前，輪詢忽略伺服器薪資，
+  // 避免較舊的輪詢回應把剛存好（或正在編輯）的薪資清掉、閃回舊值。
+  const salaryPending = useRef(null);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -493,9 +496,17 @@ export default function TimeClockApp() {
     if (ot !== undefined) setOtMultiplier(ot);
 
     const sal = parse(raw.salary, {});
-    // 避免暫時性讀到空物件就清掉已載入的薪資設定
     if (sal !== undefined) {
-      setSalary((prev) => (sal && Object.keys(sal).length === 0 && prev && Object.keys(prev).length > 0 ? prev : sal));
+      const pend = salaryPending.current;
+      if (pend && Date.now() - pend.at < 15000) {
+        // 尚有未確認的本機薪資寫入：只有伺服器資料等於我們寫的內容才接受，否則忽略（避免清空剛存的）
+        if (JSON.stringify(sal) === pend.sig) salaryPending.current = null;
+        else return; // 這次輪詢的薪資是較舊的回應，整批忽略（其餘欄位已於上方套用）
+      }
+      if (!salaryPending.current) {
+        // 避免暫時性讀到空物件就清掉已載入的薪資設定
+        setSalary((prev) => (sal && Object.keys(sal).length === 0 && prev && Object.keys(prev).length > 0 ? prev : sal));
+      }
     }
   }, []);
 
@@ -615,11 +626,15 @@ export default function TimeClockApp() {
     const empData = { ...(base[empId] || {}), [ym]: record };
     if (defaults) empData.defaults = defaults;
     const next = { ...base, [empId]: empData };
+    const payload = JSON.stringify(next);
     setSalary(next);
+    // 先記下簽章：在伺服器同步成這份之前，輪詢不會用舊薪資覆蓋，避免「沒存到又清空」
+    salaryPending.current = { sig: payload, at: Date.now() };
     flash("已儲存薪資");
     try {
-      await window.storage.set("salary", JSON.stringify(next), true);
+      await window.storage.set("salary", payload, true);
     } catch (e) {
+      salaryPending.current = null; // 寫入失敗，恢復接受伺服器資料
       flash("薪資儲存失敗，請稍後再試", "error");
     }
   };
@@ -1514,7 +1529,8 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
   useEffect(() => {
     if (!emp) { setForm(null); return; }
     const rec = effectiveRecord(emp);
-    const s = (v) => (v == null || v === "" ? "" : String(v));
+    // 空的（或為 0 的）欄位一律留白，不預填 0；計算時 num("") 仍當 0，總額不受影響。
+    const s = (v) => (v == null || v === "" || Number(v) === 0 ? "" : String(v));
     setForm({
       position: s(rec.position), workHours: s(rec.workHours), hourlyRate: s(rec.hourlyRate),
       otHours: s(rec.otHours), otRate: s(rec.otRate), carWash: s(rec.carWash),
@@ -1589,12 +1605,13 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
 * { box-sizing: border-box; }
 body { font-family: "Microsoft JhengHei","PingFang TC","Heiti TC",sans-serif; color:#111; margin:0; padding:6px; font-weight:bold; }
 h1 { font-size:17px; text-align:center; margin:2px 0 10px; font-weight:bold; }
-/* 拉長到滿版：整個格狀區佔滿一頁高度，兩列各半，卡片高度撐滿 */
-.grid { display:grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(2, 1fr); gap:5px; height:262mm; }
-table.card { border-collapse:collapse; width:100%; height:100%; font-size:12px; font-weight:bold; page-break-inside:avoid; }
-table.card th, table.card td { border:1px solid #333; padding:3px 4px; line-height:1.4; }
-table.card th { background:#eee; text-align:left; font-weight:bold; white-space:nowrap; width:50%; }
-table.card td { text-align:right; font-variant-numeric:tabular-nums; font-weight:bold; }
+/* 拉長到滿版：整個格狀區佔滿一頁高度，兩列各半，卡片高度撐滿。
+   卡片之間留較大間隔（gap），方便沿空白處剪裁。 */
+.grid { display:grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(2, 1fr); column-gap:14px; row-gap:16px; height:260mm; }
+table.card { border-collapse:collapse; width:100%; height:100%; font-size:14px; font-weight:bold; page-break-inside:avoid; }
+table.card th, table.card td { border:1px solid #333; padding:3px 3px; line-height:1.4; text-align:center; }
+table.card th { background:#eee; font-weight:bold; white-space:nowrap; width:50%; }
+table.card td { font-variant-numeric:tabular-nums; font-weight:bold; }
 table.card tr.hl th, table.card tr.hl td { font-weight:bold; background:#f3f3f3; }
 .noprint { text-align:center; margin-top:12px; }
 @media print { .noprint { display:none; } }
