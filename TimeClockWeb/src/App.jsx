@@ -1469,12 +1469,12 @@ function SalaryTotalRow({ label, value, strong }) {
 }
 
 // 原始檔案（薪資 Excel）的固定欄位初始值，依姓名對應，作為「尚未設定過的員工」每月預設。
-// 涵蓋：職務（站長＝月薪制）、時薪單價、加班時薪（全員 263）、職務加級、特別獎金、勞保、健保。
+// 涵蓋：職務（月薪＝月薪制）、時薪單價、加班時薪（全員 263）、職務加級、特別獎金、勞保、健保。
 // 員工一旦在系統內按過「儲存」，就以儲存的固定設定為準，不再套用這裡的預設。
 const SEED_DEFAULTS = {
   "許嘉晏": { position: "",   hourlyRate: 196,   otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 758,  healthIns: 470 },
   "李明諺": { position: "",   hourlyRate: 196,   otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 429,  healthIns: 447 },
-  "林毅傑": { position: "站長", hourlyRate: 30000, otRate: 263, dutyAllowance: 7000, specialBonus: 2000, laborIns: 870,  healthIns: 540 },
+  "林毅傑": { position: "月薪", hourlyRate: 30000, otRate: 263, dutyAllowance: 7000, specialBonus: 2000, laborIns: 870,  healthIns: 540 },
   "韓建龍": { position: "",   hourlyRate: 196,   otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 758,  healthIns: 470 },
   "何嘉玲": { position: "",   hourlyRate: 196,   otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 758,  healthIns: 470 },
   "劉祐寧": { position: "",   hourlyRate: 196,   otRate: 263, dutyAllowance: 0,    specialBonus: 0,    laborIns: 758,  healthIns: 470 },
@@ -1508,8 +1508,9 @@ function salaryEffectiveRecord(e, salary, punches, year, month, multiplier, over
   const dDuty = pick(d.dutyAllowance, seed.dutyAllowance, 0);
   const dSpecial = pick(d.specialBonus, seed.specialBonus, 0);
   const dPos = pick(d.position, seed.position, "");
-  const pos = saved && saved.position != null ? saved.position : dPos;
-  const chief = pos === "站長";
+  const rawPos = saved && saved.position != null ? saved.position : dPos;
+  const pos = rawPos === "站長" ? "月薪" : rawPos; // 舊資料「站長」一律視為「月薪」（僅改名稱）
+  const chief = pos === "月薪";
   const dOtRate = pick(d.otRate, seed.otRate, (dHourly ? Math.round(dHourly * multiplier) : 0));
   if (saved) {
     return {
@@ -1587,10 +1588,10 @@ function buildDeclarationSnapshot(list, salary, punches, year, month, multiplier
   const emps = {};
   list.forEach((e) => {
     const eff = salaryEffectiveRecord(e, salary, punches, year, month, multiplier, overrides);
-    const chief = eff.position === "站長";
+    const chief = eff.position === "月薪";
     const real = realDaysOf(e);
     if (chief) {
-      // 站長：月薪制。打卡紀錄沿用真實打卡，若上班超過「當月天數−7」天，刪到月休至少 7 天。
+      // 月薪職務：月薪制。打卡紀錄沿用真實打卡，若上班超過「當月天數−7」天，刪到月休至少 7 天。
       const kept = real.slice();
       const maxWork = Math.max(0, daysInMonth - 7);
       let guard = 0;
@@ -1621,22 +1622,23 @@ function printDeclarationSnapshot(snap, year, month) {
   const emps = (snap && snap.emps) || {};
   const ids = Object.keys(emps);
 
-  // 申報打卡紀錄：每位員工（含站長）一張卡片，格狀擺入同一張 A4（沿用卡片框線樣式）
+  // 申報打卡紀錄：每位員工（含月薪職務）一張卡片，格狀擺入同一張 A4（沿用卡片框線樣式）
   const pcards = ids.map((id) => {
     const r = emps[id];
     const trs = (r.days || []).map((s) => `<tr><td>${month}/${s.day}</td><td>${s.wd}</td><td>${esc(s.in)}</td><td>${esc(s.out)}</td><td>${minToHours(salNum(s.mins))}</td></tr>`).join("");
     const totalH = minToHours((r.days || []).reduce((s, d) => s + salNum(d.mins), 0));
-    return `<div class="pcard"><div class="pc-h">${esc(r.name)}（${r.chief ? "站長" : "時薪"}）</div>
+    return `<div class="pcard"><div class="pc-h">${esc(r.name)}（${r.chief ? "月薪" : "時薪"}）</div>
 <table class="pct"><thead><tr><th>日期</th><th>週</th><th>上班</th><th>下班</th><th>時數</th></tr></thead>
 <tbody>${trs}</tbody>
 <tfoot><tr><th colspan="4">合計 ${(r.days || []).length} 天</th><td>${totalH}h</td></tr></tfoot></table></div>`;
   }).join("");
 
-  // 申報薪資表（全部：站長＋時薪員工），沿用薪資單卡片版面
+  // 申報薪資表（全部：月薪＋時薪員工），沿用薪資單卡片版面
   const scards = ids.map((id, i) => {
     const rec = emps[id].rec; const cc = salaryCalc(rec);
+    const posLabel = rec.position === "站長" ? "月薪" : (rec.position || "一般");
     const items = [
-      ["序號", i + 1], ["職務", rec.position || "一般"], ["姓名", emps[id].name],
+      ["序號", i + 1], ["職務", posLabel], ["姓名", emps[id].name],
       ["工作時數", salNum(rec.workHours)], ["時薪單價", salNum(rec.hourlyRate)],
       ["加班時數", salNum(rec.otHours)], ["加班時薪", salNum(rec.otRate)],
       ["洗車獎金", salNum(rec.carWash)], ["職務加級", salNum(rec.dutyAllowance)], ["特別獎金", salNum(rec.specialBonus)],
@@ -1727,8 +1729,9 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
     const dDuty = pick(d.dutyAllowance, seed.dutyAllowance, 0);
     const dSpecial = pick(d.specialBonus, seed.specialBonus, 0);
     const dPos = pick(d.position, seed.position, "");
-    const pos = saved && saved.position != null ? saved.position : dPos;
-    const chief = pos === "站長"; // 站長＝月薪制：時數 1、時薪＝月薪、無時薪加班
+    const rawPos = saved && saved.position != null ? saved.position : dPos;
+    const pos = rawPos === "站長" ? "月薪" : rawPos; // 舊資料「站長」一律視為「月薪」（僅改名稱）
+    const chief = pos === "月薪"; // 月薪＝月薪制：時數 1、時薪＝月薪、無時薪加班
     const dOtRate = pick(d.otRate, seed.otRate, (dHourly ? Math.round(dHourly * multiplier) : 0));
     if (saved) {
       return {
@@ -1797,11 +1800,11 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
     onSaveSalary(emp.id, ym, record, defaults);
   };
 
-  // 職務下拉：選「站長」時自動改成月薪制（時數 1、月薪預設 30000、無時薪加班）
+  // 職務下拉：選「月薪」時自動改成月薪制（時數 1、月薪預設 30000、無時薪加班）
   const changePosition = (v) => {
     setForm((f) => {
       const next = { ...f, position: v };
-      if (v === "站長") {
+      if (v === "月薪") {
         next.workHours = "1";
         next.otHours = "0";
         if (num(f.hourlyRate) < 1000) next.hourlyRate = "30000";
@@ -1906,15 +1909,15 @@ table.card tr.hl th, table.card tr.hl td { font-weight:bold; background:#f3f3f3;
           <span style={{ fontSize: 13, color: COLORS.textMuted }}>職務 <span style={{ fontSize: 10, color: COLORS.textFaint }}>固定</span></span>
           <select value={form.position} onChange={(e) => changePosition(e.target.value)} style={{ ...SALARY_INPUT_STYLE, textAlign: "left", fontFamily: "inherit", width: 130 }}>
             <option value="">一般</option>
-            <option value="站長">站長（月薪制）</option>
+            <option value="月薪">月薪（月薪制）</option>
           </select>
         </div>
-        {form.position === "站長" && (
-          <div style={{ fontSize: 10, color: COLORS.brass, padding: "2px 0 4px" }}>站長為月薪制：工作時數固定 1、時薪＝月薪。</div>
+        {form.position === "月薪" && (
+          <div style={{ fontSize: 10, color: COLORS.brass, padding: "2px 0 4px" }}>月薪職務為月薪制：工作時數固定 1、時薪＝月薪。</div>
         )}
-        <SalaryNumRow label={form.position === "站長" ? "工作時數（月薪制固定 1）" : "工作時數"} hint={form.position === "站長" ? "" : `考勤 ${attendance.work}`} value={form.workHours} onChange={setF("workHours")} />
-        <SalaryNumRow label={form.position === "站長" ? "月薪" : "時薪單價"} hint="固定" value={form.hourlyRate} onChange={setF("hourlyRate")} />
-        <SalaryNumRow label="加班時數" hint={form.position === "站長" ? "" : `考勤 ${attendance.ot}`} value={form.otHours} onChange={setF("otHours")} />
+        <SalaryNumRow label={form.position === "月薪" ? "工作時數（月薪制固定 1）" : "工作時數"} hint={form.position === "月薪" ? "" : `考勤 ${attendance.work}`} value={form.workHours} onChange={setF("workHours")} />
+        <SalaryNumRow label={form.position === "月薪" ? "月薪" : "時薪單價"} hint="固定" value={form.hourlyRate} onChange={setF("hourlyRate")} />
+        <SalaryNumRow label="加班時數" hint={form.position === "月薪" ? "" : `考勤 ${attendance.ot}`} value={form.otHours} onChange={setF("otHours")} />
         <SalaryNumRow label="加班時薪" hint="固定" value={form.otRate} onChange={setF("otRate")} />
         <SalaryNumRow label="洗車獎金" value={form.carWash} onChange={setF("carWash")} />
         <SalaryNumRow label="職務加級" hint="固定" value={form.dutyAllowance} onChange={setF("dutyAllowance")} />
@@ -1940,7 +1943,7 @@ table.card tr.hl th, table.card tr.hl td { font-weight:bold; background:#f3f3f3;
         </button>
       </div>
       <div style={{ fontSize: 11, color: COLORS.textFaint, marginTop: 8, lineHeight: 1.6 }}>
-        標「固定」的欄位（時薪、加班時薪、勞保、健保、職務、職務加級、特別獎金）存一次後每個月自動帶入；工作／加班時數自動帶入該月考勤（站長月薪制固定 1）。「列印總表」會另開視窗、A4 橫向一次印出全部員工，也可存成 PDF。
+        標「固定」的欄位（時薪、加班時薪、勞保、健保、職務、職務加級、特別獎金）存一次後每個月自動帶入；工作／加班時數自動帶入該月考勤（月薪職務為月薪制、固定 1）。「列印總表」會另開視窗、A4 橫向一次印出全部員工，也可存成 PDF。
       </div>
     </div>
   );
@@ -2502,7 +2505,7 @@ function DeclarationPanel({ employees, salary, punches, multiplier, overrides, d
       <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 8 }}>申報薪資表</div>
       <div style={{ fontSize: 11, color: COLORS.textFaint, lineHeight: 1.6, marginBottom: 10 }}>
         以<b>當月真實打卡</b>為基礎，<b>刪掉部分已打卡的天數</b>使<b>實發薪資落在 29500~33000</b>（刪天時優先打散最長連續、盡量避免連上 7 天）；
-        站長<b>月休至少 7 天</b>、申報用職務加級 <b>5000</b>、無特別獎金。第一次按會<b>產生並固定</b>（存到後台），之後再按只會顯示<b>同一份</b>；
+        月薪職務<b>月休至少 7 天</b>、申報用職務加級 <b>5000</b>、無特別獎金。第一次按會<b>產生並固定</b>（存到後台），之後再按只會顯示<b>同一份</b>；
         要重新調整請按「<b>再次調整</b>」。<b>不會更動任何真實打卡與薪資資料</b>（申報資料獨立儲存）。
       </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
