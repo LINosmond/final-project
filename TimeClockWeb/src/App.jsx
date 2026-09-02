@@ -396,6 +396,8 @@ export default function TimeClockApp() {
   const toastTimer = useRef(null);
   // 有本機打卡紀錄正在背景寫回試算表時設為 true，讓輪詢暫時不要用伺服器舊資料覆蓋掉剛改的內容
   const punchesWriteInFlight = useRef(false);
+  // 員工清單正在背景寫回時設 true，讓輪詢暫時不要覆蓋（避免新增/移除/排序被閃回舊資料）
+  const employeesWriteInFlight = useRef(false);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -450,7 +452,7 @@ export default function TimeClockApp() {
       Array.isArray(next) && next.length === 0 && Array.isArray(prev) && prev.length > 0 ? prev : next;
 
     const emp = parse(raw.employees, []);
-    if (emp !== undefined) setEmployees((prev) => keepIfTransientEmpty(emp, prev));
+    if (emp !== undefined && !employeesWriteInFlight.current) setEmployees((prev) => keepIfTransientEmpty(emp, prev));
 
     const pun = parse(raw.punches, []);
     // 若有本機打卡編輯正在背景寫回，暫時不要用伺服器資料覆蓋，避免剛改的內容閃回舊值
@@ -516,11 +518,26 @@ export default function TimeClockApp() {
 
   const saveEmployees = async (next) => {
     setEmployees(next);
+    employeesWriteInFlight.current = true;
     try {
       await window.storage.set("employees", JSON.stringify(next), true);
     } catch (e) {
       flash("儲存帳號資料失敗，請稍後再試", "error");
+    } finally {
+      employeesWriteInFlight.current = false;
     }
+  };
+
+  // 管理員：調整員工在名冊/下拉/匯出中的順序（與相鄰的「已審核」員工對調）
+  const moveEmployeeAdmin = (id, dir) => {
+    const list = [...(employees || [])];
+    const idx = list.findIndex((e) => e.id === id);
+    if (idx < 0) return;
+    let j = idx + dir;
+    while (j >= 0 && j < list.length && list[j].status === "pending") j += dir;
+    if (j < 0 || j >= list.length) return;
+    [list[idx], list[j]] = [list[j], list[idx]];
+    saveEmployees(list);
   };
 
   const savePunches = async (next) => {
@@ -893,6 +910,7 @@ export default function TimeClockApp() {
               onExportBackup={exportBackup}
               onImportBackup={importBackup}
               onReviewEmployee={reviewEmployee}
+              onMoveEmployee={moveEmployeeAdmin}
               companyLocation={companyLocation}
               onSaveLocation={saveCompanyLocation}
               onClearLocation={clearCompanyLocation}
@@ -1655,7 +1673,7 @@ table.card tr.hl th, table.card tr.hl td { font-weight:bold; background:#f3f3f3;
   );
 }
 
-function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, onAddEmployee, onRemoveEmployee, onUpdateDay, onToggleHoliday, onExportBackup, onImportBackup, onReviewEmployee, companyLocation, onSaveLocation, onClearLocation, otMultiplier, onSaveOtMultiplier, salary, onSaveSalary, busy }) {
+function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, onAddEmployee, onRemoveEmployee, onUpdateDay, onToggleHoliday, onExportBackup, onImportBackup, onReviewEmployee, onMoveEmployee, companyLocation, onSaveLocation, onClearLocation, otMultiplier, onSaveOtMultiplier, salary, onSaveSalary, busy }) {
   const multiplier = otMultiplier ?? 2;
   const today = new Date();
   const overrides = holidays || {};
@@ -1779,7 +1797,7 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
         newPhone={newPhone} setNewPhone={setNewPhone}
         submitAddEmployee={submitAddEmployee} busy={busy}
       />
-      <AccountListPanel employees={activeEmployees} />
+      <AccountListPanel employees={activeEmployees} onMove={onMoveEmployee} />
     </>
   );
 
@@ -2378,7 +2396,7 @@ function PendingApprovalPanel({ pending, onReview, busy }) {
 
 // 管理員專用：查看員工帳號（姓名）與密碼（手機號碼），供員工忘記密碼時查詢。
 // 密碼屬敏感資訊，預設以圓點遮蔽，點眼睛才顯示。
-function AccountListPanel({ employees }) {
+function AccountListPanel({ employees, onMove }) {
   const [show, setShow] = useState(false);
   if (!employees.length) return null;
   return (
@@ -2403,23 +2421,57 @@ function AccountListPanel({ employees }) {
         </button>
       </div>
       <div style={{ fontSize: 11, color: COLORS.textFaint, marginBottom: 8 }}>
-        密碼即為登入用的手機號碼；員工忘記時可在此查詢。
+        密碼即為登入用的手機號碼；員工忘記時可在此查詢。用右側 ↑ ↓ 可調整順序（會同步套用到下拉選單、薪資、匯出與列印）。
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {employees.map((e) => (
+        {employees.map((e, i) => (
           <div key={e.id} style={{
             display: "flex", alignItems: "center", justifyContent: "space-between",
             background: COLORS.panelRaised, border: `1px solid ${COLORS.border}`,
             borderRadius: 8, padding: "8px 10px",
           }}>
-            <span style={{ fontSize: 14, color: COLORS.text, fontWeight: 600, marginRight: 10, wordBreak: "break-all" }}>{e.name}</span>
+            <span style={{ fontSize: 14, color: COLORS.text, fontWeight: 600, marginRight: 10, wordBreak: "break-all", flex: 1 }}>{e.name}</span>
             <span style={{
               fontFamily: "'Space Mono', monospace", fontSize: 14,
               color: show ? COLORS.brass : COLORS.textFaint,
-              letterSpacing: show ? 0.5 : 2, whiteSpace: "nowrap",
+              letterSpacing: show ? 0.5 : 2, whiteSpace: "nowrap", marginRight: 10,
             }}>
               {show ? (e.phone || "—") : "••••••••"}
             </span>
+            {onMove && (
+              <span style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                <button
+                  type="button"
+                  onClick={() => onMove(e.id, -1)}
+                  disabled={i === 0}
+                  aria-label="上移"
+                  title="上移"
+                  style={{
+                    width: 28, height: 28, borderRadius: 6, cursor: i === 0 ? "default" : "pointer",
+                    background: COLORS.panel, border: `1px solid ${COLORS.border}`,
+                    color: i === 0 ? COLORS.textFaint : COLORS.brass,
+                    opacity: i === 0 ? 0.4 : 1, fontSize: 14, lineHeight: 1, padding: 0,
+                  }}
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onMove(e.id, 1)}
+                  disabled={i === employees.length - 1}
+                  aria-label="下移"
+                  title="下移"
+                  style={{
+                    width: 28, height: 28, borderRadius: 6, cursor: i === employees.length - 1 ? "default" : "pointer",
+                    background: COLORS.panel, border: `1px solid ${COLORS.border}`,
+                    color: i === employees.length - 1 ? COLORS.textFaint : COLORS.brass,
+                    opacity: i === employees.length - 1 ? 0.4 : 1, fontSize: 14, lineHeight: 1, padding: 0,
+                  }}
+                >
+                  ↓
+                </button>
+              </span>
+            )}
           </div>
         ))}
       </div>
