@@ -388,6 +388,7 @@ export default function TimeClockApp() {
   const [companyLocation, setCompanyLocation] = useState(null); // { lat, lng, radius } or null = 不限制
   const [otMultiplier, setOtMultiplier] = useState(null); // 平日超過 8 小時部分的工時倍率，預設 2
   const [salary, setSalary] = useState(null); // 薪資設定：{ "<empId>": { "<YYYY-MM>": {...} } }
+  const [declaration, setDeclaration] = useState({}); // 申報表快照：{ "<YYYY-MM>": { generatedAt, emps: {...} } }（獨立資料，不動真實打卡/薪資）
   const [sessionId, setSessionId] = useState("");
   const [sessionType, setSessionType] = useState(""); // "employee" | "admin"
   const [busy, setBusy] = useState(false);
@@ -403,6 +404,8 @@ export default function TimeClockApp() {
   // 薪資同理：本機剛存過薪資後，在伺服器確認同步成這份之前，輪詢忽略伺服器薪資，
   // 避免較舊的輪詢回應把剛存好（或正在編輯）的薪資清掉、閃回舊值。
   const salaryPending = useRef(null);
+  // 申報表快照同理：本機存過後，在伺服器確認同步前，輪詢忽略伺服器的 declaration，避免蓋掉剛固定的。
+  const declarationPending = useRef(null);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -417,7 +420,7 @@ export default function TimeClockApp() {
   }, []);
 
   const loadAll = useCallback(async () => {
-    const KEYS = ["employees", "punches", "holidays", "companyLocation", "otMultiplier", "salary"];
+    const KEYS = ["employees", "punches", "holidays", "companyLocation", "otMultiplier", "salary", "declaration"];
 
     // 先試著用 getAll 一次抓齊所有資料（只打一次 Apps Script，載入快很多）。
     // 若後端還是舊版（不認得 getAll）或發生網路錯誤，raw 會維持 null，改走下方逐一讀取的相容路徑。
@@ -494,6 +497,17 @@ export default function TimeClockApp() {
 
     const ot = parse(raw.otMultiplier, 2);
     if (ot !== undefined) setOtMultiplier(ot);
+
+    const dec = parse(raw.declaration, {});
+    if (dec !== undefined) {
+      const pend = declarationPending.current;
+      if (pend && Date.now() - pend.at < 15000) {
+        if (JSON.stringify(dec) === pend.sig) declarationPending.current = null;
+      }
+      if (!declarationPending.current) {
+        setDeclaration((prev) => (dec && Object.keys(dec).length === 0 && prev && Object.keys(prev).length > 0 ? prev : dec));
+      }
+    }
 
     const sal = parse(raw.salary, {});
     if (sal !== undefined) {
@@ -636,6 +650,21 @@ export default function TimeClockApp() {
     } catch (e) {
       salaryPending.current = null; // 寫入失敗，恢復接受伺服器資料
       flash("薪資儲存失敗，請稍後再試", "error");
+    }
+  };
+
+  // 儲存（固定）某個月的申報表快照（獨立資料，不動真實打卡/薪資）。ym 已含月份；snap 為當月整份快照。
+  const saveDeclaration = async (ym, snap) => {
+    const base = declaration || {};
+    const next = { ...base, [ym]: snap };
+    const payload = JSON.stringify(next);
+    setDeclaration(next);
+    declarationPending.current = { sig: payload, at: Date.now() };
+    try {
+      await window.storage.set("declaration", payload, true);
+    } catch (e) {
+      declarationPending.current = null;
+      flash("申報表固定失敗，請稍後再試", "error");
     }
   };
 
@@ -949,6 +978,8 @@ export default function TimeClockApp() {
               onSaveOtMultiplier={saveOtMultiplier}
               salary={salary}
               onSaveSalary={saveSalaryRecord}
+              declaration={declaration}
+              onSaveDeclaration={saveDeclaration}
               busy={busy}
             />
           </>
@@ -1511,156 +1542,101 @@ function salaryCalc(rec) {
   return { gross, net, netRounded: Math.ceil(net / 100) * 100 };
 }
 
-// ===== 申報薪資表：只產生「可列印」的申報用打卡紀錄＋薪資列表，完全不寫入任何資料 =====
-// 站長以外的員工：每人固定上早班或晚班；自動排出上班天數使「實發薪資落在 29500~33000」、
-// 洗車獎金隨機 600~900。排班保證：每一天每個班別都至少 1 人上班、且無人連續上班 7 天以上。
-// 站長：月休 7 天（其餘上日班 09:00–18:00）；申報用職務加級改 5000、特別獎金 0（不動真實資料）。
-function openDeclarationPrint(list, salary, punches, year, month, multiplier, overrides) {
-  const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const randInt = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+// ===== 申報薪資表：以「當月真實打卡」為基礎，刪掉部分已打卡的天數，使實發薪資落在 29500~33000，
+// 產生一份「固定」的申報快照（存到後台，之後不再變動，除非按「再次調整」）。完全不動真實打卡/薪資資料。=====
+
+// 在一組（依日期遞增排序）的保留天數中，挑一個要刪除的索引：優先刪「最長連續上班區段」的中間那天，
+// 以打散連續、盡量避免連上 7 天。純函式、非隨機、結果可重現。
+function declPickRemoveIndex(days) {
+  if (!days.length) return -1;
+  let bestStart = 0, bestLen = 1, curStart = 0, curLen = 1;
+  for (let i = 1; i < days.length; i++) {
+    if (days[i].day === days[i - 1].day + 1) curLen++;
+    else { curStart = i; curLen = 1; }
+    if (curLen > bestLen) { bestLen = curLen; bestStart = curStart; }
+  }
+  return bestStart + Math.floor(bestLen / 2);
+}
+
+// 產生某個月的申報快照：{ generatedAt, year, month, emps: { "<id>": { name, chief, days:[{day,wd,in,out,mins}], rec } } }
+function buildDeclarationSnapshot(list, salary, punches, year, month, multiplier, overrides) {
   const WD = ["日", "一", "二", "三", "四", "五", "六"];
   const daysInMonth = new Date(year, month, 0).getDate();
-  const dow = (d) => WD[new Date(year, month - 1, d).getDay()]; // d 為 1-based 日期
-  const LO = 29500, HI = 33000;
-  const SHIFTS = {
-    早: { inT: "06:00", outT: "13:30", h: 7.5 },
-    晚: { inT: "13:30", outT: "21:00", h: 7.5 },
-    日: { inT: "09:00", outT: "18:00", h: 9 }, // 站長日班
+  const dow = (d) => WD[new Date(year, month - 1, d).getDay()];
+  const HI = 33000;
+
+  // 取某員工當月「真實有打卡」的每一天（含上下班時間與工時分鐘）
+  const realDaysOf = (e) => {
+    const rows = computeMonthRows(e, punches, year, month, multiplier, overrides);
+    const out = [];
+    rows.forEach((r) => {
+      if (r.subtotalMin > 0) {
+        const inTs = (r.am && r.am.inTs) || (r.pm && r.pm.inTs) || null;
+        const outTs = (r.pm && r.pm.outTs) || (r.am && r.am.outTs) || null;
+        out.push({
+          day: r.day, wd: dow(r.day),
+          in: inTs ? fmtHM(new Date(inTs)) : "",
+          out: outTs ? fmtHM(new Date(outTs)) : "",
+          mins: r.subtotalMin,
+        });
+      }
+    });
+    return out; // 已依日期遞增
   };
 
-  // 依時薪 H 與固定項，挑一個工作天數 W（每日 7.5 小時），使實發薪資落在 [LO,HI]
-  const workdaysFor = (H, fixed) => {
-    const per = 7.5 * H;
-    const lo = Math.max(1, Math.ceil((LO - fixed) / per));
-    const hi = Math.min(daysInMonth, Math.floor((HI - fixed) / per));
-    if (hi < lo) return Math.max(1, Math.min(lo, daysInMonth));
-    return lo + Math.floor(Math.random() * (hi - lo + 1));
-  };
-
-  // 分出站長與時薪員工
-  const chiefRows = [], workerRows = [];
+  const emps = {};
   list.forEach((e) => {
     const eff = salaryEffectiveRecord(e, salary, punches, year, month, multiplier, overrides);
-    if (eff.position === "站長") { chiefRows.push({ e, eff }); return; }
+    const chief = eff.position === "站長";
+    const real = realDaysOf(e);
+    if (chief) {
+      // 站長：月薪制。打卡紀錄沿用真實打卡，若上班超過「當月天數−7」天，刪到月休至少 7 天。
+      const kept = real.slice();
+      const maxWork = Math.max(0, daysInMonth - 7);
+      let guard = 0;
+      while (kept.length > maxWork && guard++ < 400) kept.splice(declPickRemoveIndex(kept), 1);
+      const rec = { ...eff, dutyAllowance: 5000, specialBonus: 0 }; // 申報用：職務加級 5000、特別獎金 0
+      emps[e.id] = { name: e.name, chief: true, days: kept, rec };
+      return;
+    }
     const H = salNum(eff.hourlyRate);
-    if (H <= 0) return; // 尚未設定時薪者略過
-    workerRows.push({ e, eff, H });
+    if (H <= 0 || real.length === 0) return; // 未設時薪或無真實打卡者略過
+    const carWash = salNum(eff.carWash);
+    const fixed = carWash + salNum(eff.dutyAllowance) + salNum(eff.specialBonus) - salNum(eff.laborIns) - salNum(eff.healthIns);
+    const maxMins = ((HI - fixed) / H) * 60; // 實發不超過 33000 對應的工時上限（分鐘）
+    const kept = real.slice();
+    const totalMins = () => kept.reduce((s, d) => s + d.mins, 0);
+    let guard = 0;
+    while (totalMins() > maxMins && kept.length > 1 && guard++ < 400) kept.splice(declPickRemoveIndex(kept), 1);
+    const rec = { ...eff, workHours: salRound2(totalMins() / 60), otHours: 0, carWash };
+    emps[e.id] = { name: e.name, chief: false, days: kept, rec };
   });
 
-  // 指派固定班別：交錯分早/晚，人數 >= 2 時各至少 1 人
-  workerRows.forEach((w, i) => { w.shift = (i % 2 === 0) ? "早" : "晚"; });
+  return { generatedAt: new Date().toISOString(), year, month, emps };
+}
 
-  // 各人工作天數 W 與洗車獎金；盡量讓實發金額不重複
-  const usedNet = new Set();
-  workerRows.forEach((w) => {
-    const duty = salNum(w.eff.dutyAllowance), special = salNum(w.eff.specialBonus);
-    const labor = salNum(w.eff.laborIns), health = salNum(w.eff.healthIns);
-    let W = 0, carWash = 0, net = 0, tries = 0;
-    do {
-      carWash = randInt(600, 900);
-      const fixed = carWash + duty + special - labor - health;
-      W = workdaysFor(w.H, fixed);
-      net = Math.ceil((7.5 * W * w.H + carWash + duty + special - labor - health) / 100) * 100;
-      tries++;
-    } while (usedNet.has(net) && tries < 80);
-    usedNet.add(net);
-    w.W = W; w.carWash = carWash;
-    w.work = new Array(daysInMonth + 1).fill(true); // 1-based；true=工作
-  });
-
-  const groups = { 早: workerRows.filter((w) => w.shift === "早"), 晚: workerRows.filter((w) => w.shift === "晚") };
-  const countWorking = (grp, d) => grp.reduce((s, w) => s + (w.work[d] ? 1 : 0), 0);
-
-  // 依 R=休息天數，均勻挑休息日、依組內序號錯開起點（不同人休不同天，維持覆蓋）
-  const assignRest = (arr, W, offset) => {
-    const R = daysInMonth - W;
-    if (R <= 0) return;
-    const rests = new Set();
-    for (let i = 0; i < R; i++) {
-      let pos = (Math.floor(i * daysInMonth / R) + offset) % daysInMonth + 1;
-      let guard = 0;
-      while (rests.has(pos) && guard < daysInMonth) { pos = (pos % daysInMonth) + 1; guard++; }
-      rests.add(pos);
-    }
-    rests.forEach((p) => { arr[p] = false; });
-  };
-  ["早", "晚"].forEach((k) => groups[k].forEach((w, gi) =>
-    assignRest(w.work, w.W, groups[k].length ? Math.floor(gi * daysInMonth / groups[k].length) : 0)));
-
-  // 覆蓋修補：每天每班別至少 1 人。若某天某組全休，挑一位當天休息者改上班，
-  // 並把他另一個「當天仍有同事上班」的工作日改休（維持工作天數不變）。
-  ["早", "晚"].forEach((k) => {
-    const grp = groups[k];
-    if (!grp.length) return;
-    for (let d = 1; d <= daysInMonth; d++) {
-      let guard = 0;
-      while (countWorking(grp, d) === 0 && guard++ < grp.length * 2) {
-        const w = grp.find((x) => !x.work[d]);
-        if (!w) break;
-        let d2 = -1;
-        for (let j = 1; j <= daysInMonth; j++) { if (w.work[j] && countWorking(grp, j) >= 2) { d2 = j; break; } }
-        w.work[d] = true;
-        if (d2 > 0) w.work[d2] = false;
-      }
-    }
-  });
-
-  // 連上修補：任何人不得連續上班 7 天以上。把連續段中的第 7 天改休，另找一個休息日補班（維持天數）。
-  ["早", "晚"].forEach((k) => groups[k].forEach((w) => {
-    for (let pass = 0; pass < 6; pass++) {
-      let run = 0, broke = false;
-      for (let d = 1; d <= daysInMonth; d++) {
-        if (w.work[d]) {
-          run++;
-          if (run >= 7 && (countWorking(groups[k], d) >= 2 || groups[k].length === 1)) {
-            w.work[d] = false;
-            for (let j = 1; j <= daysInMonth; j++) { if (!w.work[j] && j !== d) { w.work[j] = true; break; } }
-            broke = true; break;
-          }
-        } else run = 0;
-      }
-      if (!broke) break;
-    }
-  }));
-
-  // 站長：月休 7 天（其餘上日班），依序號錯開
-  chiefRows.forEach((c, ci) => {
-    c.work = new Array(daysInMonth + 1).fill(true);
-    assignRest(c.work, daysInMonth - 7, ci * 3);
-    c.shift = "日";
-  });
-
-  // 依原本員工順序組出輸出列（申報用薪資紀錄）
-  const byId = {};
-  chiefRows.forEach((c) => {
-    // 申報用：站長職務加級改 5000、特別獎金 0（工作時數維持月薪制 1）
-    byId[c.e.id] = { e: c.e, rec: { ...c.eff, dutyAllowance: 5000, specialBonus: 0 }, work: c.work, shift: "日", chief: true };
-  });
-  workerRows.forEach((w) => {
-    const days = w.work.reduce((s, x, i) => s + (i >= 1 && x ? 1 : 0), 0);
-    const totalHours = salRound2(days * SHIFTS[w.shift].h);
-    byId[w.e.id] = { e: w.e, rec: { ...w.eff, workHours: totalHours, otHours: 0, carWash: w.carWash }, work: w.work, shift: w.shift, chief: false };
-  });
-  const outRows = list.map((e) => byId[e.id]).filter(Boolean);
+// 依「已固定的快照」列印（純渲染、不重算，確保每次看到同一份）。
+function printDeclarationSnapshot(snap, year, month) {
+  const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const emps = (snap && snap.emps) || {};
+  const ids = Object.keys(emps);
 
   // 申報打卡紀錄：每位員工（含站長）一張卡片，格狀擺入同一張 A4（沿用卡片框線樣式）
-  const pcards = outRows.map((r) => {
-    const sdef = SHIFTS[r.shift];
-    const days = [];
-    for (let d = 1; d <= daysInMonth; d++) if (r.work[d]) days.push(d);
-    const trs = days.map((d) => `<tr><td>${month}/${d}</td><td>${dow(d)}</td><td>${r.shift}</td><td>${sdef.inT}</td><td>${sdef.outT}</td></tr>`).join("");
-    const totalH = salRound2(days.length * sdef.h);
-    return `<div class="pcard"><div class="pc-h">${esc(r.e.name)}（${r.chief ? "站長" : r.shift + "班"}）</div>
-<table class="pct"><thead><tr><th>日期</th><th>週</th><th>班</th><th>上班</th><th>下班</th></tr></thead>
+  const pcards = ids.map((id) => {
+    const r = emps[id];
+    const trs = (r.days || []).map((s) => `<tr><td>${month}/${s.day}</td><td>${s.wd}</td><td>${esc(s.in)}</td><td>${esc(s.out)}</td><td>${minToHours(salNum(s.mins))}</td></tr>`).join("");
+    const totalH = minToHours((r.days || []).reduce((s, d) => s + salNum(d.mins), 0));
+    return `<div class="pcard"><div class="pc-h">${esc(r.name)}（${r.chief ? "站長" : "時薪"}）</div>
+<table class="pct"><thead><tr><th>日期</th><th>週</th><th>上班</th><th>下班</th><th>時數</th></tr></thead>
 <tbody>${trs}</tbody>
-<tfoot><tr><th colspan="4">合計 ${days.length} 天</th><td>${totalH}h</td></tr></tfoot></table></div>`;
+<tfoot><tr><th colspan="4">合計 ${(r.days || []).length} 天</th><td>${totalH}h</td></tr></tfoot></table></div>`;
   }).join("");
 
   // 申報薪資表（全部：站長＋時薪員工），沿用薪資單卡片版面
-  const scards = outRows.map((r, i) => {
-    const rec = r.rec; const cc = salaryCalc(rec);
+  const scards = ids.map((id, i) => {
+    const rec = emps[id].rec; const cc = salaryCalc(rec);
     const items = [
-      ["序號", i + 1], ["職務", rec.position || "一般"], ["姓名", r.e.name],
+      ["序號", i + 1], ["職務", rec.position || "一般"], ["姓名", emps[id].name],
       ["工作時數", salNum(rec.workHours)], ["時薪單價", salNum(rec.hourlyRate)],
       ["加班時數", salNum(rec.otHours)], ["加班時薪", salNum(rec.otRate)],
       ["洗車獎金", salNum(rec.carWash)], ["職務加級", salNum(rec.dutyAllowance)], ["特別獎金", salNum(rec.specialBonus)],
@@ -1970,7 +1946,7 @@ table.card tr.hl th, table.card tr.hl td { font-weight:bold; background:#f3f3f3;
   );
 }
 
-function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, onAddEmployee, onRemoveEmployee, onUpdateDay, onToggleHoliday, onExportBackup, onImportBackup, onReviewEmployee, onMoveEmployee, companyLocation, onSaveLocation, onClearLocation, otMultiplier, onSaveOtMultiplier, salary, onSaveSalary, busy }) {
+function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, onAddEmployee, onRemoveEmployee, onUpdateDay, onToggleHoliday, onExportBackup, onImportBackup, onReviewEmployee, onMoveEmployee, companyLocation, onSaveLocation, onClearLocation, otMultiplier, onSaveOtMultiplier, salary, onSaveSalary, declaration, onSaveDeclaration, busy }) {
   const multiplier = otMultiplier ?? 2;
   const today = new Date();
   const overrides = holidays || {};
@@ -2100,7 +2076,7 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
 
   const settingsSection = (
     <>
-      <DeclarationPanel employees={activeEmployees} salary={salary} punches={punches} multiplier={multiplier} overrides={overrides} />
+      <DeclarationPanel employees={activeEmployees} salary={salary} punches={punches} multiplier={multiplier} overrides={overrides} declaration={declaration} onSaveDeclaration={onSaveDeclaration} />
       <LocationPanel companyLocation={companyLocation} onSave={onSaveLocation} onClear={onClearLocation} busy={busy} />
       <OvertimeRatePanel multiplier={multiplier} onSave={onSaveOtMultiplier} busy={busy} />
       <BackupPanel onExport={onExportBackup} onImport={onImportBackup} busy={busy} />
@@ -2494,25 +2470,40 @@ function LocationPanel({ companyLocation, onSave, onClear, busy }) {
   );
 }
 
-// 申報薪資表：選月份後按鈕，開啟可列印的「申報打卡紀錄＋薪資列表」（隨機工時 154~163、洗車獎金 600~900）。
-// 只產生報表、完全不更動任何已儲存資料。
-function DeclarationPanel({ employees, salary, punches, multiplier, overrides }) {
+// 申報薪資表：以當月真實打卡為基礎、刪掉部分打卡天數使實發落在 29500~33000。
+// 第一次按會「產生並固定」（存到後台），之後按只會顯示同一份；要重算請按「再次調整」。
+// 完全不更動真實打卡/薪資資料（申報快照存在獨立的 declaration 資料）。
+function DeclarationPanel({ employees, salary, punches, multiplier, overrides, declaration, onSaveDeclaration }) {
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
+  const ym = `${year}-${pad2(month)}`;
+  const existing = (declaration || {})[ym];
   const selStyle = {
     flex: 1, padding: "8px 10px", borderRadius: 8, background: COLORS.panelRaised,
     border: `1px solid ${COLORS.border}`, color: COLORS.text, fontSize: 13, outline: "none",
   };
+
+  const generateFixed = () => {
+    // 已固定：直接顯示同一份，不重算
+    if (existing && existing.emps) { printDeclarationSnapshot(existing, year, month); return; }
+    const snap = buildDeclarationSnapshot(employees, salary, punches, year, month, multiplier, overrides);
+    onSaveDeclaration(ym, snap);
+    printDeclarationSnapshot(snap, year, month);
+  };
+  const readjust = () => {
+    const snap = buildDeclarationSnapshot(employees, salary, punches, year, month, multiplier, overrides);
+    onSaveDeclaration(ym, snap); // 覆蓋固定
+    printDeclarationSnapshot(snap, year, month);
+  };
+
   return (
     <div style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, marginBottom: 14 }}>
       <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 8 }}>申報薪資表</div>
       <div style={{ fontSize: 11, color: COLORS.textFaint, lineHeight: 1.6, marginBottom: 10 }}>
-        按下後依所選月份排出申報班表：站長以外每人<b>固定</b>上早班 <b>06:00–13:30</b> 或晚班 <b>13:30–21:00</b>；
-        保證<b>每天每個班別都至少 1 人</b>、且<b>無人連續上班 7 天以上</b>；自動調整上班天數使<b>實發薪資落在 29500~33000</b>、
-        洗車獎金隨機 <b>600~900</b>、金額盡量不重複。站長<b>月休 7 天</b>（其餘上日班 09:00–18:00），申報用職務加級 <b>5000</b>、無特別獎金。
-        開啟可列印的「<b>申報打卡紀錄</b>（含站長、卡片格狀排入同一張 A4）＋<b>薪資總表</b>」。
-        <b>只產生報表、不更動任何已儲存資料</b>；每按一次重新隨機。
+        以<b>當月真實打卡</b>為基礎，<b>刪掉部分已打卡的天數</b>使<b>實發薪資落在 29500~33000</b>（刪天時優先打散最長連續、盡量避免連上 7 天）；
+        站長<b>月休至少 7 天</b>、申報用職務加級 <b>5000</b>、無特別獎金。第一次按會<b>產生並固定</b>（存到後台），之後再按只會顯示<b>同一份</b>；
+        要重新調整請按「<b>再次調整</b>」。<b>不會更動任何真實打卡與薪資資料</b>（申報資料獨立儲存）。
       </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
         <select value={month} onChange={(e) => setMonth(Number(e.target.value))} style={selStyle}>
@@ -2522,11 +2513,22 @@ function DeclarationPanel({ employees, salary, punches, multiplier, overrides })
           {[today.getFullYear() - 1, today.getFullYear(), today.getFullYear() + 1].map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
       </div>
+      <div style={{ fontSize: 11, color: existing ? COLORS.brass : COLORS.textFaint, marginBottom: 8 }}>
+        {existing
+          ? `本月申報表已固定（產生於 ${new Date(existing.generatedAt).toLocaleString("zh-TW")}）`
+          : "本月尚未產生；第一次按「產生並固定」會建立並鎖定這份申報表。"}
+      </div>
       <button
-        onClick={() => openDeclarationPrint(employees, salary, punches, year, month, multiplier, overrides)}
-        style={{ width: "100%", padding: "11px 0", borderRadius: 8, border: "none", background: COLORS.brass, color: "#20160b", fontSize: 14, fontWeight: 700, cursor: "pointer" }}
+        onClick={generateFixed}
+        style={{ width: "100%", padding: "11px 0", borderRadius: 8, border: "none", background: COLORS.brass, color: "#20160b", fontSize: 14, fontWeight: 700, cursor: "pointer", marginBottom: 8 }}
       >
-        🖨 產生申報薪資表（可列印）
+        {existing ? "🖨 檢視／列印申報薪資表" : "🖨 產生並固定申報薪資表"}
+      </button>
+      <button
+        onClick={readjust}
+        style={{ width: "100%", padding: "10px 0", borderRadius: 8, border: `1px solid ${COLORS.brassDim}`, background: "none", color: COLORS.brass, fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+      >
+        🔄 再次調整當月申報表格
       </button>
     </div>
   );
