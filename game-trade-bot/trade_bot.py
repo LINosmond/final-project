@@ -129,6 +129,8 @@ if sys.platform == "win32":
 
 def press_click(button="left", hold=0.03):
     """在滑鼠目前位置按一下（按下→停 hold 秒→放開）。"""
+    if not window_ok():
+        return  # 有鎖定視窗、但它不在最前面 → 不點，避免點到別的視窗
     if _USE_SENDINPUT:
         down, up = ("ldown", "lup") if button == "left" else ("rdown", "rup")
         _send_mouse(_MOUSEEVENTF[down])
@@ -136,6 +138,69 @@ def press_click(button="left", hold=0.03):
         _send_mouse(_MOUSEEVENTF[up])
     else:
         pyautogui.click(button=button)
+
+
+# ---------------------------------------------------------------------------
+# 視窗鎖定（Ctrl+F1）：鎖定目前最前面的視窗，之後只有那個視窗在最前面時才會真的點擊，
+# 避免焦點跑到別的視窗時亂點到不該點的地方。
+# ---------------------------------------------------------------------------
+_locked_hwnd = None
+
+
+def _foreground_hwnd():
+    if sys.platform != "win32":
+        return None
+    try:
+        return int(ctypes.windll.user32.GetForegroundWindow())
+    except Exception:
+        return None
+
+
+def _window_title(hwnd):
+    if sys.platform != "win32" or not hwnd:
+        return ""
+    try:
+        n = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+        buf = ctypes.create_unicode_buffer(n + 1)
+        ctypes.windll.user32.GetWindowTextW(hwnd, buf, n + 1)
+        return buf.value
+    except Exception:
+        return ""
+
+
+def _ctrl_down():
+    try:
+        return keyboard is not None and keyboard.is_pressed("ctrl")
+    except Exception:
+        return False
+
+
+def window_ok():
+    """有鎖定視窗時，只有鎖定的視窗在最前面才回 True；沒鎖定就一律 True。"""
+    if _locked_hwnd is None:
+        return True
+    fg = _foreground_hwnd()
+    if fg is None:
+        return True  # 拿不到前景視窗就不擋，避免完全不能動
+    return fg == _locked_hwnd
+
+
+def on_lock_window(cfg=None):
+    global _locked_hwnd
+    if sys.platform != "win32":
+        print("視窗鎖定只支援 Windows。")
+        return
+    if _locked_hwnd is not None:
+        _locked_hwnd = None
+        print("🔓 已解除視窗鎖定（現在任何視窗都會動作）。")
+        return
+    hwnd = _foreground_hwnd()
+    if not hwnd:
+        print("抓不到目前視窗。請先點一下遊戲視窗讓它在最前面，再按 Ctrl+F1。")
+        return
+    _locked_hwnd = hwnd
+    print(f"🔒 已鎖定視窗：「{_window_title(hwnd)}」。"
+          "之後只有這個視窗在最前面時才會點擊；焦點跑到別的視窗就不動作。再按一次 Ctrl+F1 解除。")
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -278,6 +343,8 @@ def sleep_interruptible(seconds):
 
 
 def click(x, y, cfg):
+    if not window_ok():
+        return  # 鎖定的視窗不在最前面 → 連移動+點擊都跳過
     pyautogui.moveTo(x, y, duration=cfg["timing"]["move_duration"])
     time.sleep(0.02)
     press_click("left", cfg["timing"].get("click_hold", 0.03))
@@ -1445,7 +1512,12 @@ def setup_f7(cfg):
 
 
 def hotkey_loop(cfg, dry_run, debug):
-    keyboard.add_hotkey("f1", lambda: on_start_trade(cfg, dry_run, debug, F1_COUNT))
+    keyboard.add_hotkey("ctrl+f1", lambda: on_lock_window(cfg))
+    # F1：按 Ctrl+F1 時不要順便觸發 F1 搬運（有些系統 ctrl+f1 會連 f1 一起觸發）
+    keyboard.add_hotkey(
+        "f1",
+        lambda: None if _ctrl_down() else on_start_trade(cfg, dry_run, debug, F1_COUNT),
+    )
     keyboard.add_hotkey("f2", lambda: on_start_trade(cfg, dry_run, debug, F2_COUNT))
     keyboard.add_hotkey("f3", lambda: on_start_trade(cfg, dry_run, debug, F3_COUNT, f3_detection(cfg)))
     keyboard.add_hotkey("f4", lambda: on_toggle_rightclick(cfg))
@@ -1482,6 +1554,8 @@ def hotkey_loop(cfg, dry_run, debug):
     print("    F9 = 提起交易端 開／關（前置點→準備→等對方橘燈→確認；自己發起交易用）"
           + ("" if f9_ready(cfg) else "（尚未設定：跑 校正.bat 設定交易點位＋前置點）"))
     print("    Shift+F9 = 更新 F9 前置點位置（角色移動時，瞄準角色按一下即可）")
+    print("    Ctrl+F1 = 鎖定/解除『只在目前視窗運作』（先點一下遊戲視窗再按，"
+          + ("目前已鎖定）" if _locked_hwnd is not None else "避免點到其他視窗）"))
     print("    （滑鼠甩到螢幕左上角 = 緊急停止；要結束程式關掉視窗或 Ctrl+C）")
     print("=" * 52)
     try:
