@@ -1653,19 +1653,21 @@ function printDeclarationSnapshot(snap, year, month) {
 <style>
 @page { size: A4 portrait; margin: 6mm; }
 * { box-sizing: border-box; }
-body { font-family:"Microsoft JhengHei","PingFang TC","Heiti TC",sans-serif; color:#111; margin:0; padding:6px; font-weight:bold; }
-h1 { font-size:16px; text-align:center; margin:1px 0 6px; font-weight:bold; }
-.sec { page-break-before: always; }
+body { font-family:"Microsoft JhengHei","PingFang TC","Heiti TC",sans-serif; color:#111; margin:0; padding:0; font-weight:bold; }
+.page { width: 198mm; margin: 0 auto; }
+.page + .page { page-break-before: always; }
+.fit { transform-origin: top center; }
+h1 { font-size:17px; text-align:center; margin:1px 0 8px; font-weight:bold; }
 .pgrid { display:grid; grid-template-columns: repeat(3, 1fr); gap:8px 10px; }
 .pcard { page-break-inside:avoid; }
 .pc-h { font-size:12px; text-align:center; margin:0 0 2px; }
-table.pct { border-collapse:collapse; width:100%; font-size:9.5px; }
-table.pct th, table.pct td { border:1px solid #333; padding:1px 2px; text-align:center; line-height:1.25; }
+table.pct { border-collapse:collapse; width:100%; font-size:10px; }
+table.pct th, table.pct td { border:1px solid #333; padding:1px 2px; text-align:center; line-height:1.3; }
 table.pct thead th { background:#eee; }
 table.pct tfoot th, table.pct tfoot td { background:#f3f3f3; }
-.grid { display:grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(2, 1fr); column-gap:10px; row-gap:10px; height:205mm; }
-table.card { border-collapse:collapse; width:100%; height:100%; font-size:12px; font-weight:bold; page-break-inside:avoid; }
-table.card th, table.card td { border:1px solid #333; padding:1px 3px; line-height:1.12; text-align:center; }
+.grid { display:grid; grid-template-columns: repeat(5, 1fr); column-gap:12px; row-gap:14px; }
+table.card { border-collapse:collapse; width:100%; font-size:14px; font-weight:bold; page-break-inside:avoid; }
+table.card th, table.card td { border:1px solid #333; padding:3px 3px; line-height:1.4; text-align:center; }
 table.card th { background:#eee; white-space:nowrap; width:50%; }
 table.card td { font-variant-numeric:tabular-nums; }
 table.card tr.hl th, table.card tr.hl td { background:#f3f3f3; }
@@ -1673,11 +1675,24 @@ table.card tr.hl th, table.card tr.hl td { background:#f3f3f3; }
 @media print { .noprint { display:none; } }
 </style></head>
 <body>
-<h1>${year} 年 ${month} 月　申報打卡紀錄</h1>
-<div class="pgrid">${pcards || '<div>（無可申報的時薪員工）</div>'}</div>
-<div class="sec"><h1>${year} 年 ${month} 月　申報薪資表</h1><div class="grid">${scards}</div></div>
+<div class="page"><div class="fit"><h1>${year} 年 ${month} 月　申報打卡紀錄</h1>
+<div class="pgrid">${pcards || '<div>（無可申報的時薪員工）</div>'}</div></div></div>
+<div class="page"><div class="fit"><h1>${year} 年 ${month} 月　申報薪資表</h1>
+<div class="grid">${scards}</div></div></div>
 <div class="noprint"><button onclick="window.print()" style="padding:8px 22px;font-size:14px;cursor:pointer;">列印 / 存成 PDF</button></div>
-<script>window.onload=function(){setTimeout(function(){try{window.print();}catch(e){}},400);};</script>
+<script>
+// 自動縮放：量測每一頁內容高度，超過單頁可列印範圍就等比例縮小，確保每頁都印在同一張。
+function fitPages(){
+  var TARGET = 940;
+  var list = document.querySelectorAll('.fit');
+  for (var i=0;i<list.length;i++){
+    var el=list[i], h=el.offsetHeight;
+    if (h>TARGET){ var s=TARGET/h; el.style.transform='scale('+s+')'; el.parentNode.style.height=Math.ceil(h*s)+'px'; }
+    else { el.parentNode.style.height=h+'px'; }
+  }
+}
+window.onload=function(){setTimeout(function(){fitPages();try{window.print();}catch(e){}},500);};
+</script>
 </body></html>`;
   const w = window.open("", "_blank");
   if (!w) { alert("請允許彈出視窗，才能開啟申報薪資表"); return; }
@@ -1837,12 +1852,13 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
 <style>
 @page { size: A4 portrait; margin: 6mm; }
 * { box-sizing: border-box; }
-body { font-family: "Microsoft JhengHei","PingFang TC","Heiti TC",sans-serif; color:#111; margin:0; padding:6px; font-weight:bold; }
-h1 { font-size:16px; text-align:center; margin:1px 0 6px; font-weight:bold; }
-/* 高度略小於一頁可列印範圍，避免加上頁首與印表機邊界後溢位到第二頁。卡片間留間隔方便剪裁。 */
-.grid { display:grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(2, 1fr); column-gap:10px; row-gap:10px; height:205mm; }
-table.card { border-collapse:collapse; width:100%; height:100%; font-size:12px; font-weight:bold; page-break-inside:avoid; }
-table.card th, table.card td { border:1px solid #333; padding:1px 3px; line-height:1.12; text-align:center; }
+body { font-family: "Microsoft JhengHei","PingFang TC","Heiti TC",sans-serif; color:#111; margin:0; padding:0; font-weight:bold; }
+.page { width: 198mm; margin: 0 auto; }
+.fit { transform-origin: top center; }
+h1 { font-size:17px; text-align:center; margin:1px 0 8px; font-weight:bold; }
+.grid { display:grid; grid-template-columns: repeat(5, 1fr); column-gap:12px; row-gap:14px; }
+table.card { border-collapse:collapse; width:100%; font-size:14px; font-weight:bold; page-break-inside:avoid; }
+table.card th, table.card td { border:1px solid #333; padding:3px 3px; line-height:1.4; text-align:center; }
 table.card th { background:#eee; font-weight:bold; white-space:nowrap; width:50%; }
 table.card td { font-variant-numeric:tabular-nums; font-weight:bold; }
 table.card tr.hl th, table.card tr.hl td { font-weight:bold; background:#f3f3f3; }
@@ -1850,10 +1866,24 @@ table.card tr.hl th, table.card tr.hl td { font-weight:bold; background:#f3f3f3;
 @media print { .noprint { display:none; } }
 </style></head>
 <body>
+<div class="page"><div class="fit">
 <h1>${year} 年 ${month} 月　薪資表</h1>
 <div class="grid">${cards}</div>
+</div></div>
 <div class="noprint"><button onclick="window.print()" style="padding:8px 22px;font-size:14px;cursor:pointer;">列印 / 存成 PDF</button></div>
-<script>window.onload=function(){setTimeout(function(){try{window.print();}catch(e){}},400);};</script>
+<script>
+// 自動縮放：量測每一頁內容高度，若超過單頁可列印範圍就用 zoom 等比例縮小（zoom 會一併縮小版面高度，
+// 分頁才會跟著縮），確保每一頁都印在同一張，不受印表機邊界大小影響。
+function fitPages(){
+  var TARGET = 940; // px（約 A4 可列印高度，已預留較大的印表機邊界）
+  var list = document.querySelectorAll('.fit');
+  for (var i=0;i<list.length;i++){
+    var el=list[i], h=el.offsetHeight;
+    if (h>TARGET) el.style.zoom = (TARGET/h);
+  }
+}
+window.onload=function(){setTimeout(function(){fitPages();try{window.print();}catch(e){}},500);};
+</script>
 </body></html>`;
     const w = window.open("", "_blank");
     if (!w) { alert("請允許彈出視窗，才能開啟列印總表"); return; }
