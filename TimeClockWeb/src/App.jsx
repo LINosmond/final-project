@@ -1651,10 +1651,10 @@ function printDeclarationSnapshot(snap, year, month) {
 
   const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>${year}年${month}月申報薪資表</title>
 <style>
-@page { size: A4 portrait; margin: 8mm; }
+@page { size: A4 portrait; margin: 6mm; }
 * { box-sizing: border-box; }
 body { font-family:"Microsoft JhengHei","PingFang TC","Heiti TC",sans-serif; color:#111; margin:0; padding:6px; font-weight:bold; }
-h1 { font-size:17px; text-align:center; margin:2px 0 8px; font-weight:bold; }
+h1 { font-size:16px; text-align:center; margin:1px 0 6px; font-weight:bold; }
 .sec { page-break-before: always; }
 .pgrid { display:grid; grid-template-columns: repeat(3, 1fr); gap:8px 10px; }
 .pcard { page-break-inside:avoid; }
@@ -1663,8 +1663,8 @@ table.pct { border-collapse:collapse; width:100%; font-size:9.5px; }
 table.pct th, table.pct td { border:1px solid #333; padding:1px 2px; text-align:center; line-height:1.25; }
 table.pct thead th { background:#eee; }
 table.pct tfoot th, table.pct tfoot td { background:#f3f3f3; }
-.grid { display:grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(2, 1fr); column-gap:14px; row-gap:16px; height:250mm; }
-table.card { border-collapse:collapse; width:100%; height:100%; font-size:14px; font-weight:bold; page-break-inside:avoid; }
+.grid { display:grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(2, 1fr); column-gap:12px; row-gap:14px; height:238mm; }
+table.card { border-collapse:collapse; width:100%; height:100%; font-size:13px; font-weight:bold; page-break-inside:avoid; }
 table.card th, table.card td { border:1px solid #333; padding:3px 3px; line-height:1.4; text-align:center; }
 table.card th { background:#eee; white-space:nowrap; width:50%; }
 table.card td { font-variant-numeric:tabular-nums; }
@@ -1835,14 +1835,13 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
     }).join("");
     const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>${year}年${month}月薪資表</title>
 <style>
-@page { size: A4 portrait; margin: 8mm; }
+@page { size: A4 portrait; margin: 6mm; }
 * { box-sizing: border-box; }
 body { font-family: "Microsoft JhengHei","PingFang TC","Heiti TC",sans-serif; color:#111; margin:0; padding:6px; font-weight:bold; }
-h1 { font-size:17px; text-align:center; margin:2px 0 10px; font-weight:bold; }
-/* 拉長到滿版：整個格狀區佔滿一頁高度，兩列各半，卡片高度撐滿。
-   卡片之間留較大間隔（gap），方便沿空白處剪裁。 */
-.grid { display:grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(2, 1fr); column-gap:14px; row-gap:16px; height:260mm; }
-table.card { border-collapse:collapse; width:100%; height:100%; font-size:14px; font-weight:bold; page-break-inside:avoid; }
+h1 { font-size:16px; text-align:center; margin:1px 0 6px; font-weight:bold; }
+/* 高度略小於一頁可列印範圍，避免加上頁首與印表機邊界後溢位到第二頁。卡片間留間隔方便剪裁。 */
+.grid { display:grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(2, 1fr); column-gap:12px; row-gap:14px; height:238mm; }
+table.card { border-collapse:collapse; width:100%; height:100%; font-size:13px; font-weight:bold; page-break-inside:avoid; }
 table.card th, table.card td { border:1px solid #333; padding:3px 3px; line-height:1.4; text-align:center; }
 table.card th { background:#eee; font-weight:bold; white-space:nowrap; width:50%; }
 table.card td { font-variant-numeric:tabular-nums; font-weight:bold; }
