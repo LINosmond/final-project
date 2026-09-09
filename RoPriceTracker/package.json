@@ -1,0 +1,16 @@
+{
+  "name": "ro-price-tracker",
+  "version": "1.0.0",
+  "description": "RO 遊戲物價追蹤：登入 gnjoy 物價查詢，釘選商品並定時自動更新",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "capture": "node src/capture.js",
+    "postinstall": "playwright install firefox chromium"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "playwright": "^1.48.0"
+  }
+}
