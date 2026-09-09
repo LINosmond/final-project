@@ -1448,11 +1448,16 @@ const SALARY_INPUT_STYLE = { width: 120, padding: "7px 9px", borderRadius: 7, ba
 
 // 這兩個列元件放在模組層級（不要定義在 SalaryPanel 內部）。因為主畫面每秒會更新時鐘而重繪，
 // 若元件定義在內部，每次重繪都會產生新的元件型別 → 輸入框被重新掛載 → 手機鍵盤被收起。
-function SalaryNumRow({ label, hint, value, onChange }) {
+// onHintClick：提供時，提示（例如「考勤 54」）會變成可點的連結，點一下把該值帶入欄位。
+function SalaryNumRow({ label, hint, value, onChange, onHintClick }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: `1px solid ${COLORS.border}` }}>
       <span style={{ fontSize: 13, color: COLORS.textMuted }}>
-        {label}{hint ? <span style={{ fontSize: 10, color: COLORS.textFaint, marginLeft: 6 }}>{hint}</span> : null}
+        {label}{hint ? (
+          onHintClick
+            ? <button type="button" onClick={onHintClick} style={{ fontSize: 10, color: COLORS.brass, marginLeft: 6, background: "none", border: "none", padding: 0, cursor: "pointer", textDecoration: "underline" }}>{hint}（點我帶入）</button>
+            : <span style={{ fontSize: 10, color: COLORS.textFaint, marginLeft: 6 }}>{hint}</span>
+        ) : null}
       </span>
       <input type="number" inputMode="decimal" value={value} onChange={(e) => onChange(e.target.value)} style={SALARY_INPUT_STYLE} />
     </div>
@@ -1799,10 +1804,16 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
   const setF = (k) => (v) => setForm((f) => ({ ...f, [k]: v }));
 
   const save = () => {
+    // 工作／加班時數若與「目前考勤」相同，就存成 null（＝自動跟隨考勤）；之後補打卡、時數會自動更新，
+    // 不會像以前一樣被「提早結算」時的數字凍結住。只有管理員手動改成別的值才會固定下來。
+    const chief = form.position === "月薪";
+    const autoWork = chief ? 1 : attendance.work;
+    const autoOt = chief ? 0 : attendance.ot;
+    const w = num(form.workHours), o = num(form.otHours);
     const record = {
       position: form.position || "",
-      workHours: num(form.workHours), hourlyRate: num(form.hourlyRate),
-      otHours: num(form.otHours), otRate: num(form.otRate),
+      workHours: w === autoWork ? null : w, hourlyRate: num(form.hourlyRate),
+      otHours: o === autoOt ? null : o, otRate: num(form.otRate),
       carWash: num(form.carWash), dutyAllowance: num(form.dutyAllowance), specialBonus: num(form.specialBonus),
       laborIns: num(form.laborIns), healthIns: num(form.healthIns), advance: num(form.advance),
     };
@@ -1944,9 +1955,9 @@ window.onload=function(){setTimeout(function(){fitPages();try{window.print();}ca
         {form.position === "月薪" && (
           <div style={{ fontSize: 10, color: COLORS.brass, padding: "2px 0 4px" }}>月薪職務為月薪制：工作時數固定 1、時薪＝月薪。</div>
         )}
-        <SalaryNumRow label={form.position === "月薪" ? "工作時數（月薪制固定 1）" : "工作時數"} hint={form.position === "月薪" ? "" : `考勤 ${attendance.work}`} value={form.workHours} onChange={setF("workHours")} />
+        <SalaryNumRow label={form.position === "月薪" ? "工作時數（月薪制固定 1）" : "工作時數"} hint={form.position === "月薪" ? "" : `考勤 ${attendance.work}`} value={form.workHours} onChange={setF("workHours")} onHintClick={form.position === "月薪" ? undefined : () => setF("workHours")(String(attendance.work))} />
         <SalaryNumRow label={form.position === "月薪" ? "月薪" : "時薪單價"} hint="固定" value={form.hourlyRate} onChange={setF("hourlyRate")} />
-        <SalaryNumRow label="加班時數" hint={form.position === "月薪" ? "" : `考勤 ${attendance.ot}`} value={form.otHours} onChange={setF("otHours")} />
+        <SalaryNumRow label="加班時數" hint={form.position === "月薪" ? "" : `考勤 ${attendance.ot}`} value={form.otHours} onChange={setF("otHours")} onHintClick={form.position === "月薪" ? undefined : () => setF("otHours")(String(attendance.ot))} />
         <SalaryNumRow label="加班時薪" hint="固定" value={form.otRate} onChange={setF("otRate")} />
         <SalaryNumRow label="洗車獎金" value={form.carWash} onChange={setF("carWash")} />
         <SalaryNumRow label="職務加級" hint="固定" value={form.dutyAllowance} onChange={setF("dutyAllowance")} />
