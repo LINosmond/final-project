@@ -512,6 +512,8 @@ export default function TimeClockApp() {
     const sal = parse(raw.salary, {});
     if (sal !== undefined) {
       const pend = salaryPending.current;
+      if (pend?.writing) return;
+      if (pend && Date.now() - pend.at >= 15000) salaryPending.current = null;
       if (pend && Date.now() - pend.at < 15000) {
         // 尚有未確認的本機薪資寫入：只有伺服器資料等於我們寫的內容才接受，否則忽略（避免清空剛存的）
         if (JSON.stringify(sal) === pend.sig) salaryPending.current = null;
@@ -634,19 +636,25 @@ export default function TimeClockApp() {
     }
   };
 
-  // 儲存某位員工某個月的薪資設定（樂觀更新 + 背景寫回）；defaults＝該員工的固定設定，供每月自動帶入
+  // 儲存某位員工某個月的薪資設定（寫入成功後才更新畫面）；defaults＝該員工的固定設定，供每月自動帶入
   const saveSalaryRecord = async (empId, ym, record, defaults) => {
+    // 切換分頁後重新開啟薪資頁，也不能同時送出第二份整包資料。
+    if (salaryPending.current?.writing) {
+      flash("薪資儲存中，請稍候再試", "error");
+      return;
+    }
     const base = salary || {};
     const empData = { ...(base[empId] || {}), [ym]: record };
     if (defaults) empData.defaults = defaults;
     const next = { ...base, [empId]: empData };
     const payload = JSON.stringify(next);
-    setSalary(next);
     // 先記下簽章：在伺服器同步成這份之前，輪詢不會用舊薪資覆蓋，避免「沒存到又清空」
-    salaryPending.current = { sig: payload, at: Date.now() };
-    flash("已儲存薪資");
+    salaryPending.current = { sig: payload, at: Date.now(), writing: true };
     try {
       await window.storage.set("salary", payload, true);
+      setSalary(next);
+      salaryPending.current = { sig: payload, at: Date.now() };
+      flash("已儲存薪資");
     } catch (e) {
       salaryPending.current = null; // 寫入失敗，恢復接受伺服器資料
       flash("薪資儲存失敗，請稍後再試", "error");
@@ -1448,18 +1456,13 @@ const SALARY_INPUT_STYLE = { width: 120, padding: "7px 9px", borderRadius: 7, ba
 
 // 這兩個列元件放在模組層級（不要定義在 SalaryPanel 內部）。因為主畫面每秒會更新時鐘而重繪，
 // 若元件定義在內部，每次重繪都會產生新的元件型別 → 輸入框被重新掛載 → 手機鍵盤被收起。
-// onHintClick：提供時，提示（例如「考勤 54」）會變成可點的連結，點一下把該值帶入欄位。
-function SalaryNumRow({ label, hint, value, onChange, onHintClick }) {
+function SalaryNumRow({ label, hint, value, onChange, readOnly = false }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: `1px solid ${COLORS.border}` }}>
       <span style={{ fontSize: 13, color: COLORS.textMuted }}>
-        {label}{hint ? (
-          onHintClick
-            ? <button type="button" onClick={onHintClick} style={{ fontSize: 10, color: COLORS.brass, marginLeft: 6, background: "none", border: "none", padding: 0, cursor: "pointer", textDecoration: "underline" }}>{hint}（點我帶入）</button>
-            : <span style={{ fontSize: 10, color: COLORS.textFaint, marginLeft: 6 }}>{hint}</span>
-        ) : null}
+        {label}{hint ? <span style={{ fontSize: 10, color: COLORS.textFaint, marginLeft: 6 }}>{hint}</span> : null}
       </span>
-      <input type="number" inputMode="decimal" value={value} onChange={(e) => onChange(e.target.value)} style={SALARY_INPUT_STYLE} />
+      <input aria-label={label} type="number" inputMode="decimal" value={value} readOnly={readOnly} onChange={onChange ? (e) => onChange(e.target.value) : undefined} style={SALARY_INPUT_STYLE} />
     </div>
   );
 }
@@ -1498,7 +1501,7 @@ function salaryHoursOf(e, punches, year, month, multiplier, overrides) {
   return { work: salRound2(bMin / 60), ot: salRound2(oMin / 60) };
 }
 
-// 取某位員工某月的「有效薪資紀錄」：已存過該月用該月；否則用固定設定 defaults／SEED 預設＋當月考勤時數。
+// 金額設定取當月紀錄／固定設定；工時一律取最新考勤（包含舊版曾固定時數的紀錄）。
 function salaryEffectiveRecord(e, salary, punches, year, month, multiplier, overrides) {
   const ym = `${year}-${pad2(month)}`;
   const empSal = (salary || {})[e.id] || {};
@@ -1520,9 +1523,9 @@ function salaryEffectiveRecord(e, salary, punches, year, month, multiplier, over
   if (saved) {
     return {
       position: pos,
-      workHours: saved.workHours != null ? saved.workHours : (chief ? 1 : att.work),
+      workHours: chief ? 1 : att.work,
       hourlyRate: saved.hourlyRate != null ? saved.hourlyRate : dHourly,
-      otHours: saved.otHours != null ? saved.otHours : (chief ? 0 : att.ot),
+      otHours: chief ? 0 : att.ot,
       otRate: saved.otRate != null ? saved.otRate : dOtRate,
       carWash: saved.carWash || 0,
       dutyAllowance: saved.dutyAllowance != null ? saved.dutyAllowance : dDuty,
@@ -1714,6 +1717,8 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [form, setForm] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const saveInFlight = useRef(false);
 
   useEffect(() => {
     if (!employees.some((e) => e.id === employeeId)) setEmployeeId(employees[0]?.id || "");
@@ -1722,60 +1727,9 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
   const emp = employees.find((e) => e.id === employeeId);
   const ym = `${year}-${pad2(month)}`;
   const num = (x) => { const n = Number(x); return isFinite(n) ? n : 0; };
-  const round2 = (n) => Math.round(n * 100) / 100;
 
-  const hoursOf = (e) => {
-    const rows = computeMonthRows(e, punches, year, month, multiplier, overrides);
-    const bMin = rows.reduce((s, r) => s + (r.isHoliday ? r.subtotalMin * 2 : r.subtotalMin - r.otMin), 0);
-    const oMin = rows.reduce((s, r) => s + r.otMin, 0);
-    return { work: round2(bMin / 60), ot: round2(oMin / 60) };
-  };
-
-  const attendance = useMemo(() => (emp ? hoursOf(emp) : { work: 0, ot: 0 }), [emp, punches, year, month, multiplier, holidays]);
-
-  // 取「有效紀錄」：已存過該月的用該月的；沒存過的用「員工固定設定 defaults」＋該月考勤時數。
-  const effectiveRecord = (e) => {
-    const empSal = (salary || {})[e.id] || {};
-    const att = hoursOf(e);
-    const saved = empSal[ym];
-    const d = empSal.defaults || {};
-    // 依姓名帶入原始檔案的固定設定（尚未存過任何預設時使用；之後儲存就以儲存的為準）：
-    // 職務、時薪、加班時薪（263）、職務加級、特別獎金、勞保、健保。
-    const seed = SEED_DEFAULTS[e.name] || {};
-    const pick = (dv, sv, fb) => (dv != null ? dv : (sv != null ? sv : fb));
-    const dLabor = pick(d.laborIns, seed.laborIns, 0);
-    const dHealth = pick(d.healthIns, seed.healthIns, 0);
-    const dHourly = pick(d.hourlyRate, seed.hourlyRate, 0);
-    const dDuty = pick(d.dutyAllowance, seed.dutyAllowance, 0);
-    const dSpecial = pick(d.specialBonus, seed.specialBonus, 0);
-    const dPos = pick(d.position, seed.position, "");
-    const rawPos = saved && saved.position != null ? saved.position : dPos;
-    const pos = rawPos === "站長" ? "月薪" : rawPos; // 舊資料「站長」一律視為「月薪」（僅改名稱）
-    const chief = pos === "月薪"; // 月薪＝月薪制：時數 1、時薪＝月薪、無時薪加班
-    const dOtRate = pick(d.otRate, seed.otRate, (dHourly ? Math.round(dHourly * multiplier) : 0));
-    if (saved) {
-      return {
-        position: pos,
-        workHours: saved.workHours != null ? saved.workHours : (chief ? 1 : att.work),
-        hourlyRate: saved.hourlyRate != null ? saved.hourlyRate : dHourly,
-        otHours: saved.otHours != null ? saved.otHours : (chief ? 0 : att.ot),
-        otRate: saved.otRate != null ? saved.otRate : dOtRate,
-        carWash: saved.carWash || 0,
-        dutyAllowance: saved.dutyAllowance != null ? saved.dutyAllowance : dDuty,
-        specialBonus: saved.specialBonus != null ? saved.specialBonus : dSpecial,
-        laborIns: saved.laborIns != null ? saved.laborIns : dLabor,
-        healthIns: saved.healthIns != null ? saved.healthIns : dHealth,
-        advance: saved.advance || 0,
-      };
-    }
-    return {
-      position: pos,
-      workHours: chief ? 1 : att.work, hourlyRate: dHourly,
-      otHours: chief ? 0 : att.ot, otRate: dOtRate,
-      carWash: 0, dutyAllowance: dDuty, specialBonus: dSpecial,
-      laborIns: dLabor, healthIns: dHealth, advance: 0,
-    };
-  };
+  const attendance = useMemo(() => (emp ? salaryHoursOf(emp, punches, year, month, multiplier, overrides) : { work: 0, ot: 0 }), [emp, punches, year, month, multiplier, holidays]);
+  const effectiveRecord = (e) => salaryEffectiveRecord(e, salary, punches, year, month, multiplier, overrides);
 
   // 只在「該員工的薪資內容真的改變」時才重設表單（用內容字串比對，而非物件參照）。
   // 這樣每 6 秒輪詢即使產生新的 salary 物件，只要內容沒變就不會把使用者還沒儲存的輸入清掉。
@@ -1786,34 +1740,27 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
     // 空的（或為 0 的）欄位一律留白，不預填 0；計算時 num("") 仍當 0，總額不受影響。
     const s = (v) => (v == null || v === "" || Number(v) === 0 ? "" : String(v));
     setForm({
-      position: s(rec.position), workHours: s(rec.workHours), hourlyRate: s(rec.hourlyRate),
-      otHours: s(rec.otHours), otRate: s(rec.otRate), carWash: s(rec.carWash),
+      position: s(rec.position), hourlyRate: s(rec.hourlyRate),
+      otRate: s(rec.otRate), carWash: s(rec.carWash),
       dutyAllowance: s(rec.dutyAllowance), specialBonus: s(rec.specialBonus),
       laborIns: s(rec.laborIns), healthIns: s(rec.healthIns), advance: s(rec.advance),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employeeId, ym, empSalSig]);
 
-  const calc = (rec) => {
-    const gross = num(rec.workHours) * num(rec.hourlyRate) + num(rec.otHours) * num(rec.otRate)
-      + num(rec.carWash) + num(rec.dutyAllowance) + num(rec.specialBonus);
-    const net = gross - num(rec.laborIns) - num(rec.healthIns) - num(rec.advance);
-    return { gross, net, netRounded: Math.ceil(net / 100) * 100 };
-  };
+  const calc = salaryCalc;
 
   const setF = (k) => (v) => setForm((f) => ({ ...f, [k]: v }));
 
-  const save = () => {
-    // 工作／加班時數若與「目前考勤」相同，就存成 null（＝自動跟隨考勤）；之後補打卡、時數會自動更新，
-    // 不會像以前一樣被「提早結算」時的數字凍結住。只有管理員手動改成別的值才會固定下來。
-    const chief = form.position === "月薪";
-    const autoWork = chief ? 1 : attendance.work;
-    const autoOt = chief ? 0 : attendance.ot;
-    const w = num(form.workHours), o = num(form.otHours);
+  const save = async () => {
+    if (!emp || !form || saveInFlight.current) return;
+    saveInFlight.current = true;
+    setSaving(true);
+    // 工時永遠由考勤推導；null 相容舊版資料格式，不再儲存結算時數。
     const record = {
       position: form.position || "",
-      workHours: w === autoWork ? null : w, hourlyRate: num(form.hourlyRate),
-      otHours: o === autoOt ? null : o, otRate: num(form.otRate),
+      workHours: null, hourlyRate: num(form.hourlyRate),
+      otHours: null, otRate: num(form.otRate),
       carWash: num(form.carWash), dutyAllowance: num(form.dutyAllowance), specialBonus: num(form.specialBonus),
       laborIns: num(form.laborIns), healthIns: num(form.healthIns), advance: num(form.advance),
     };
@@ -1823,7 +1770,12 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
       laborIns: record.laborIns, healthIns: record.healthIns,
       dutyAllowance: record.dutyAllowance, specialBonus: record.specialBonus,
     };
-    onSaveSalary(emp.id, ym, record, defaults);
+    try {
+      await onSaveSalary(emp.id, ym, record, defaults);
+    } finally {
+      saveInFlight.current = false;
+      setSaving(false);
+    }
   };
 
   // 職務下拉：選「月薪」時自動改成月薪制（時數 1、月薪預設 30000、無時薪加班）
@@ -1831,12 +1783,7 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
     setForm((f) => {
       const next = { ...f, position: v };
       if (v === "月薪") {
-        next.workHours = "1";
-        next.otHours = "0";
         if (num(f.hourlyRate) < 1000) next.hourlyRate = "30000";
-      } else if (num(f.workHours) <= 1) {
-        next.workHours = String(attendance.work);
-        next.otHours = String(attendance.ot);
       }
       return next;
     });
@@ -1918,36 +1865,38 @@ window.onload=function(){setTimeout(function(){fitPages();try{window.print();}ca
   }
   if (!form) return null;
 
-  const c = calc(form);
+  // 即時計算工時，不透過重設表單同步，避免補登／輪詢清掉未儲存的獎金與扣款。
+  const liveRecord = { ...form, workHours: form.position === "月薪" ? 1 : attendance.work, otHours: form.position === "月薪" ? 0 : attendance.ot };
+  const c = calc(liveRecord);
   const selStyle = { flex: 1, padding: "9px 10px", borderRadius: 8, background: COLORS.panelRaised, border: `1px solid ${COLORS.border}`, color: COLORS.text, fontSize: 13, outline: "none" };
 
   return (
     <div>
       <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-        <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} style={{ ...selStyle, flex: 1.4 }}>
+        <select disabled={saving} value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} style={{ ...selStyle, flex: 1.4 }}>
           {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
         </select>
-        <select value={month} onChange={(e) => setMonth(Number(e.target.value))} style={selStyle}>
+        <select disabled={saving} value={month} onChange={(e) => setMonth(Number(e.target.value))} style={selStyle}>
           {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{m} 月</option>)}
         </select>
-        <select value={year} onChange={(e) => setYear(Number(e.target.value))} style={selStyle}>
+        <select disabled={saving} value={year} onChange={(e) => setYear(Number(e.target.value))} style={selStyle}>
           {[today.getFullYear() - 1, today.getFullYear(), today.getFullYear() + 1].map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
       </div>
 
-      <div style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
+      <fieldset disabled={saving} style={{ minWidth: 0, margin: "0 0 12px", background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 14px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
           <span style={{ fontSize: 15, fontWeight: 700, color: COLORS.text }}>{emp?.name} 薪資單</span>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 12, color: COLORS.textFaint }}>{year} 年 {month} 月</span>
-            <button onClick={save} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: COLORS.brass, color: "#20160b", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
-              💾 儲存
+            <button onClick={save} disabled={saving} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: COLORS.brass, color: "#20160b", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+              {saving ? "儲存中…" : "💾 儲存"}
             </button>
           </div>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: `1px solid ${COLORS.border}` }}>
           <span style={{ fontSize: 13, color: COLORS.textMuted }}>職務 <span style={{ fontSize: 10, color: COLORS.textFaint }}>固定</span></span>
-          <select value={form.position} onChange={(e) => changePosition(e.target.value)} style={{ ...SALARY_INPUT_STYLE, textAlign: "left", fontFamily: "inherit", width: 130 }}>
+          <select disabled={saving} value={form.position} onChange={(e) => changePosition(e.target.value)} style={{ ...SALARY_INPUT_STYLE, textAlign: "left", fontFamily: "inherit", width: 130 }}>
             <option value="">一般</option>
             <option value="月薪">月薪（月薪制）</option>
           </select>
@@ -1955,9 +1904,9 @@ window.onload=function(){setTimeout(function(){fitPages();try{window.print();}ca
         {form.position === "月薪" && (
           <div style={{ fontSize: 10, color: COLORS.brass, padding: "2px 0 4px" }}>月薪職務為月薪制：工作時數固定 1、時薪＝月薪。</div>
         )}
-        <SalaryNumRow label={form.position === "月薪" ? "工作時數（月薪制固定 1）" : "工作時數"} hint={form.position === "月薪" ? "" : `考勤 ${attendance.work}`} value={form.workHours} onChange={setF("workHours")} onHintClick={form.position === "月薪" ? undefined : () => setF("workHours")(String(attendance.work))} />
+        <SalaryNumRow label={form.position === "月薪" ? "工作時數（月薪制固定 1）" : "工作時數"} hint="自動計算" value={liveRecord.workHours} readOnly />
         <SalaryNumRow label={form.position === "月薪" ? "月薪" : "時薪單價"} hint="固定" value={form.hourlyRate} onChange={setF("hourlyRate")} />
-        <SalaryNumRow label="加班時數" hint={form.position === "月薪" ? "" : `考勤 ${attendance.ot}`} value={form.otHours} onChange={setF("otHours")} onHintClick={form.position === "月薪" ? undefined : () => setF("otHours")(String(attendance.ot))} />
+        <SalaryNumRow label="加班時數" hint="自動計算" value={liveRecord.otHours} readOnly />
         <SalaryNumRow label="加班時薪" hint="固定" value={form.otRate} onChange={setF("otRate")} />
         <SalaryNumRow label="洗車獎金" value={form.carWash} onChange={setF("carWash")} />
         <SalaryNumRow label="職務加級" hint="固定" value={form.dutyAllowance} onChange={setF("dutyAllowance")} />
@@ -1971,19 +1920,19 @@ window.onload=function(){setTimeout(function(){fitPages();try{window.print();}ca
         <div style={{ textAlign: "right", fontSize: 10, color: COLORS.textFaint, marginTop: -4 }}>
           （未進位 {c.net.toLocaleString()}；實發為無條件進位到百元）
         </div>
-      </div>
+      </fieldset>
 
       <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 6 }}>全員薪資總表（{year} 年 {month} 月）</div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button onClick={printSalarySummary} style={{ flex: 1, minWidth: 150, padding: "11px 0", borderRadius: 8, border: "none", background: COLORS.cardBlue, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+        <button onClick={printSalarySummary} disabled={saving} style={{ flex: 1, minWidth: 150, padding: "11px 0", borderRadius: 8, border: "none", background: COLORS.cardBlue, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
           🖨 列印總表（A4）
         </button>
-        <button onClick={exportSalaryCsv} style={{ flex: 1, minWidth: 150, padding: "11px 0", borderRadius: 8, border: `1px solid ${COLORS.brassDim}`, background: "none", color: COLORS.brass, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+        <button onClick={exportSalaryCsv} disabled={saving} style={{ flex: 1, minWidth: 150, padding: "11px 0", borderRadius: 8, border: `1px solid ${COLORS.brassDim}`, background: "none", color: COLORS.brass, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
           ⤓ 匯出總表 CSV
         </button>
       </div>
       <div style={{ fontSize: 11, color: COLORS.textFaint, marginTop: 8, lineHeight: 1.6 }}>
-        標「固定」的欄位（時薪、加班時薪、勞保、健保、職務、職務加級、特別獎金）存一次後每個月自動帶入；工作／加班時數自動帶入該月考勤（月薪職務為月薪制、固定 1）。「列印總表」會另開視窗、A4 橫向一次印出全部員工，也可存成 PDF。
+        標「固定」的欄位（時薪、加班時薪、勞保、健保、職務、職務加級、特別獎金）存一次後每個月自動帶入；工作／加班時數隨該月考勤自動更新，補登後不必重新儲存（月薪制固定 1、加班 0）。考勤卡合計含加班倍率；薪資將工作與加班分列計算。金額修改後請先儲存，再列印或匯出總表。「列印總表」為 A4 直式，也可存成 PDF。
       </div>
     </div>
   );
@@ -2925,3 +2874,6 @@ function tdStyle(isDay) {
     color: isDay ? "#3A4A56" : "#1E2A33",
   };
 }
+
+// 共用計算與流程測試入口。
+export { SalaryPanel, salaryEffectiveRecord, salaryHoursOf, salaryCalc, computeMonthRows };

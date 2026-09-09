@@ -35,6 +35,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Test attendance and salary flows
+        run: npm test
+
       - name: Build
         env:
           # GitHub Pages 專案頁的子路徑
