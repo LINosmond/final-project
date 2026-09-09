@@ -1663,9 +1663,9 @@ table.pct { border-collapse:collapse; width:100%; font-size:9.5px; }
 table.pct th, table.pct td { border:1px solid #333; padding:1px 2px; text-align:center; line-height:1.25; }
 table.pct thead th { background:#eee; }
 table.pct tfoot th, table.pct tfoot td { background:#f3f3f3; }
-.grid { display:grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(2, 1fr); column-gap:12px; row-gap:12px; height:224mm; }
-table.card { border-collapse:collapse; width:100%; height:100%; font-size:13px; font-weight:bold; page-break-inside:avoid; }
-table.card th, table.card td { border:1px solid #333; padding:2px 3px; line-height:1.2; text-align:center; }
+.grid { display:grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(2, 1fr); column-gap:10px; row-gap:10px; height:205mm; }
+table.card { border-collapse:collapse; width:100%; height:100%; font-size:12px; font-weight:bold; page-break-inside:avoid; }
+table.card th, table.card td { border:1px solid #333; padding:1px 3px; line-height:1.12; text-align:center; }
 table.card th { background:#eee; white-space:nowrap; width:50%; }
 table.card td { font-variant-numeric:tabular-nums; }
 table.card tr.hl th, table.card tr.hl td { background:#f3f3f3; }
@@ -1840,9 +1840,9 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
 body { font-family: "Microsoft JhengHei","PingFang TC","Heiti TC",sans-serif; color:#111; margin:0; padding:6px; font-weight:bold; }
 h1 { font-size:16px; text-align:center; margin:1px 0 6px; font-weight:bold; }
 /* 高度略小於一頁可列印範圍，避免加上頁首與印表機邊界後溢位到第二頁。卡片間留間隔方便剪裁。 */
-.grid { display:grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(2, 1fr); column-gap:12px; row-gap:12px; height:224mm; }
-table.card { border-collapse:collapse; width:100%; height:100%; font-size:13px; font-weight:bold; page-break-inside:avoid; }
-table.card th, table.card td { border:1px solid #333; padding:2px 3px; line-height:1.2; text-align:center; }
+.grid { display:grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(2, 1fr); column-gap:10px; row-gap:10px; height:205mm; }
+table.card { border-collapse:collapse; width:100%; height:100%; font-size:12px; font-weight:bold; page-break-inside:avoid; }
+table.card th, table.card td { border:1px solid #333; padding:1px 3px; line-height:1.12; text-align:center; }
 table.card th { background:#eee; font-weight:bold; white-space:nowrap; width:50%; }
 table.card td { font-variant-numeric:tabular-nums; font-weight:bold; }
 table.card tr.hl th, table.card tr.hl td { font-weight:bold; background:#f3f3f3; }
