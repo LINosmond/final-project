@@ -5,6 +5,14 @@ const API_URL = import.meta.env.VITE_SHEETS_API_URL;
 const API_KEY = import.meta.env.VITE_SHEETS_API_KEY || "";
 
 const LOCAL_PREFIX = "tc_local_";
+const REQUEST_TIMEOUT_MS = 20000;
+
+function apiError(message, code, retryable = false) {
+  const error = new Error(message);
+  error.code = code;
+  error.retryable = retryable;
+  return error;
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -13,34 +21,75 @@ function sleep(ms) {
 // 單次呼叫 Apps Script（不含重試）
 async function callApiOnce(action, extra = {}) {
   if (!API_URL) {
-    throw new Error("尚未設定 VITE_SHEETS_API_URL，請參考 README 設定 Apps Script 網址");
+    throw apiError("尚未設定 VITE_SHEETS_API_URL，請參考 README 設定 Apps Script 網址", "CONFIG_ERROR");
   }
-  const res = await fetch(API_URL, {
-    method: "POST",
-    // 用 text/plain 避免瀏覽器對 Apps Script 發出 CORS 預檢請求（preflight）
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify({ action, apiKey: API_KEY, ...extra }),
+  const controller = new AbortController();
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(apiError("連線逾時，請確認網路後再試。", "TIMEOUT", true));
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
   });
-  if (!res.ok) throw new Error(`API 回應異常（HTTP ${res.status}）`);
-  const data = await res.json();
-  if (!data.ok) throw new Error(data.error || "API 回傳失敗");
-  return data;
+  try {
+    const request = (async () => {
+      const res = await fetch(API_URL, {
+        method: "POST",
+        // 用 text/plain 避免瀏覽器對 Apps Script 發出 CORS 預檢請求（preflight）
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action, apiKey: API_KEY, ...extra }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const retryable = res.status === 408 || res.status === 429 || (res.status >= 500 && res.status <= 599);
+        throw apiError(`API 回應異常（HTTP ${res.status}）`, "HTTP_ERROR", retryable);
+      }
+      const data = await res.json();
+      if (!data || typeof data !== "object" || Array.isArray(data) || typeof data.ok !== "boolean") {
+        throw apiError("伺服器回傳的資料格式不正確，請稍後重新整理。", "INVALID_RESPONSE");
+      }
+      if (!data.ok) {
+        const message = typeof data.error === "string" ? data.error : "API 回傳失敗";
+        const unsupported = /^unknown action(?:\s*:|$)/i.test(message.trim());
+        const lockTimeout = /lock timeout|timeout exceeded waiting for (?:the )?lock/i.test(message);
+        throw apiError(message, unsupported ? "UNSUPPORTED_ACTION" : "API_ERROR", lockTimeout);
+      }
+      return data;
+    })();
+    // race 同時限制 fetch 與回應本文讀取；即使傳輸沒有及時響應 abort 也能結束等待。
+    return await Promise.race([request, timeout]);
+  } catch (error) {
+    if (error.code) throw error;
+    if (error.name === "TypeError" || error.name === "NetworkError") {
+      throw apiError("網路連線失敗，請確認網路後再試。", "NETWORK_ERROR", true);
+    }
+    throw apiError("伺服器回傳的資料格式不正確，請稍後重新整理。", "INVALID_RESPONSE");
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-// 呼叫 Apps Script，失敗時自動重試，擋掉 Apps Script/網路的暫時性抖動（例如打卡送出失敗）。
-// 預設多試 2 次（共 3 次），每次間隔遞增；沒設定網址等本地錯誤則不重試。
-async function callApi(action, extra = {}, retries = 2) {
-  let lastErr;
-  for (let attempt = 0; attempt <= retries; attempt++) {
+// 只為讀取與後端已去重的操作重試一次。整包覆寫、刪除、審核不自動重送，
+// 避免「伺服器已完成但回覆遺失」時再次覆蓋期間其他人的修改。
+async function callApi(action, extra = {}) {
+  const readOnly = action === "get" || action === "getAll";
+  const idempotent = (action === "appendPunch" && Boolean(extra.entry?.id)) ||
+    (action === "findOrCreateEmployee" && Boolean(extra.name && extra.phone));
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
       return await callApiOnce(action, extra);
-    } catch (e) {
-      lastErr = e;
-      if (!API_URL) throw e; // 設定問題，重試無意義
-      if (attempt < retries) await sleep(600 * (attempt + 1));
+    } catch (error) {
+      if (attempt === 0 && error.retryable && (readOnly || idempotent)) {
+        await sleep(600);
+        continue;
+      }
+      if (!readOnly && ["TIMEOUT", "NETWORK_ERROR", "HTTP_ERROR", "INVALID_RESPONSE"].includes(error.code)) {
+        error.message += " 操作結果尚未確認，請先重新整理核對，避免重複操作。";
+        error.resultUnknown = true;
+      }
+      throw error;
     }
   }
-  throw lastErr;
 }
 
 const storage = {
@@ -50,6 +99,9 @@ const storage = {
       return v == null ? null : { value: v };
     }
     const data = await callApi("get", { key });
+    if (!Object.prototype.hasOwnProperty.call(data, "value") || (data.value !== null && typeof data.value !== "string")) {
+      throw apiError("伺服器回傳的資料不完整，請稍後重新整理。", "INVALID_RESPONSE");
+    }
     return data.value == null ? null : { value: data.value };
   },
 
@@ -57,7 +109,13 @@ const storage = {
   // 回傳格式為 { key: 原始字串或 null }。
   async getAll(keys) {
     const data = await callApi("getAll", { keys });
-    return data.values || {};
+    const values = data.values;
+    if (!values || typeof values !== "object" || Array.isArray(values) || keys.some((key) =>
+      !Object.prototype.hasOwnProperty.call(values, key) || (values[key] !== null && typeof values[key] !== "string")
+    )) {
+      throw apiError("伺服器回傳的資料不完整，請稍後重新整理。", "INVALID_RESPONSE");
+    }
+    return values;
   },
 
   async set(key, value, shared) {

@@ -391,6 +391,16 @@ export default function TimeClockApp() {
   const [declaration, setDeclaration] = useState({}); // 申報表快照：{ "<YYYY-MM>": { generatedAt, emps: {...} } }（獨立資料，不動真實打卡/薪資）
   const [sessionId, setSessionId] = useState("");
   const [sessionType, setSessionType] = useState(""); // "employee" | "admin"
+  const [sessionChecked, setSessionChecked] = useState(false);
+  const [sessionNotice, setSessionNotice] = useState("");
+  const [syncError, setSyncError] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [readyScope, setReadyScope] = useState("");
+  const syncInFlight = useRef(null);
+  const mounted = useRef(false);
+  const syncScope = sessionChecked ? `${sessionType}:${sessionId}` : "restoring";
+  const currentScope = useRef(syncScope);
+  currentScope.current = syncScope;
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [toastTone, setToastTone] = useState("info");
@@ -408,6 +418,36 @@ export default function TimeClockApp() {
   const declarationPending = useRef(null);
 
   useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  // 先讀這台裝置記住的帳號；雲端名單暫時為空，不代表使用者已登出。
+  // 員工身分仍須由最新名單確認後，才會顯示可操作的打卡畫面。
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const saved = await window.storage.get("session", false);
+        const parsed = saved?.value ? JSON.parse(saved.value) : null;
+        if (!active) return;
+        if (parsed?.type === "admin") {
+          setSessionId("admin");
+          setSessionType("admin");
+        } else if (parsed?.type === "employee" && typeof parsed.id === "string" && parsed.id) {
+          setSessionId(parsed.id);
+          setSessionType("employee");
+        }
+      } catch {
+        // 儲存空間不可用或紀錄損壞時，仍允許正常登入。
+      } finally {
+        if (active) setSessionChecked(true);
+      }
+    })();
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
@@ -420,143 +460,168 @@ export default function TimeClockApp() {
   }, []);
 
   const loadAll = useCallback(async () => {
-    const KEYS = ["employees", "punches", "holidays", "companyLocation", "otMultiplier", "salary", "declaration"];
-
-    // 先試著用 getAll 一次抓齊所有資料（只打一次 Apps Script，載入快很多）。
-    // 若後端還是舊版（不認得 getAll）或發生網路錯誤，raw 會維持 null，改走下方逐一讀取的相容路徑。
-    let raw = null;
-    try {
-      const values = await window.storage.getAll(KEYS);
-      raw = {};
-      KEYS.forEach((k) => { raw[k] = values[k] != null ? values[k] : null; });
-    } catch (e) {
-      raw = null;
+    if (!sessionChecked || !mounted.current || currentScope.current !== syncScope) return;
+    // 登入／切換帳號時若上一輪還在讀取，等它結束再讀新帳號需要的資料。
+    // 同一帳號的重試、回到前景與排程共用同一個請求，避免堆積。
+    const previous = syncInFlight.current;
+    if (previous) {
+      await previous.promise;
+      if (previous.scope === syncScope) return;
+      return loadAll();
     }
-
-    // 相容路徑：逐一讀取。讀取失敗的 key 標記為 undefined，代表「保留現有資料、不要覆寫」，
-    // 避免暫時性網路錯誤把畫面「登出」或清空。
-    if (!raw) {
-      raw = {};
-      for (const k of KEYS) {
-        try {
-          const res = await window.storage.get(k, true);
-          raw[k] = res ? res.value : null;
-        } catch (e) {
-          raw[k] = undefined;
-        }
-      }
-    }
-
-    // undefined＝讀取失敗保留現狀；null＝尚無資料，套用預設值；其餘＝解析 JSON
-    const parse = (value, fallback) => {
-      if (value === undefined) return undefined;
-      if (value == null) return fallback;
-      try { return JSON.parse(value); } catch (e) { return fallback; }
-    };
-
-    // 防止暫時性讀取到空清單（Apps Script 偶爾會回空）就把畫面上的資料清掉：
-    // 若原本已有資料、這次卻讀到空陣列，視為暫時性問題、保留原本的，避免畫面閃「尚無資料」
-    const keepIfTransientEmpty = (next, prev) =>
-      Array.isArray(next) && next.length === 0 && Array.isArray(prev) && prev.length > 0 ? prev : next;
-
-    const emp = parse(raw.employees, []);
-    if (emp !== undefined) {
-      const pend = employeesPending.current;
-      if (pend && Date.now() - pend.at < 15000) {
-        // 尚有未確認的本機寫入：只有當伺服器資料「等於我們寫的內容」時才接受並解除等待；
-        // 否則視為較舊的輪詢回應，忽略之，維持畫面上剛存好的順序。
-        if (JSON.stringify(emp) === pend.sig) {
-          employeesPending.current = null;
-          setEmployees((prev) => keepIfTransientEmpty(emp, prev));
-        }
-      } else {
-        if (pend) employeesPending.current = null; // 超過 15 秒仍未確認，放棄等待，恢復同步
-        setEmployees((prev) => keepIfTransientEmpty(emp, prev));
-      }
-    }
-
-    const pun = parse(raw.punches, []);
-    // 若有本機打卡編輯正在背景寫回，暫時不要用伺服器資料覆蓋，避免剛改的內容閃回舊值
-    if (pun !== undefined && !punchesWriteInFlight.current) {
-      setPunches((prev) => keepIfTransientEmpty(pun, prev));
-    }
-
-    let hol = parse(raw.holidays, {});
-    if (hol !== undefined) {
-      if (Array.isArray(hol)) {
-        // 相容舊版資料格式（純日期陣列）：轉換成覆寫表
-        const migrated = {};
-        hol.forEach((d) => { migrated[d] = true; });
-        hol = migrated;
-      }
-      setHolidays(hol);
-    }
-
-    const loc = parse(raw.companyLocation, null);
-    if (loc !== undefined) setCompanyLocation(loc);
-
-    const ot = parse(raw.otMultiplier, 2);
-    if (ot !== undefined) setOtMultiplier(ot);
-
-    const dec = parse(raw.declaration, {});
-    if (dec !== undefined) {
-      const pend = declarationPending.current;
-      if (pend && Date.now() - pend.at < 15000) {
-        if (JSON.stringify(dec) === pend.sig) declarationPending.current = null;
-      }
-      if (!declarationPending.current) {
-        setDeclaration((prev) => (dec && Object.keys(dec).length === 0 && prev && Object.keys(prev).length > 0 ? prev : dec));
-      }
-    }
-
-    const sal = parse(raw.salary, {});
-    if (sal !== undefined) {
-      const pend = salaryPending.current;
-      if (pend?.writing) return;
-      if (pend && Date.now() - pend.at >= 15000) salaryPending.current = null;
-      if (pend && Date.now() - pend.at < 15000) {
-        // 尚有未確認的本機薪資寫入：只有伺服器資料等於我們寫的內容才接受，否則忽略（避免清空剛存的）
-        if (JSON.stringify(sal) === pend.sig) salaryPending.current = null;
-        else return; // 這次輪詢的薪資是較舊的回應，整批忽略（其餘欄位已於上方套用）
-      }
-      if (!salaryPending.current) {
-        // 避免暫時性讀到空物件就清掉已載入的薪資設定
-        setSalary((prev) => (sal && Object.keys(sal).length === 0 && prev && Object.keys(prev).length > 0 ? prev : sal));
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    loadAll();
-    const t = setInterval(loadAll, 6000);
-    return () => clearInterval(t);
-  }, [loadAll]);
-
-  const [sessionChecked, setSessionChecked] = useState(false);
-
-  // 還原上次登入狀態：等員工資料載入完成後，看看這台裝置有沒有記住的帳號（只嘗試一次，避免每次輪詢都重讀）
-  useEffect(() => {
-    if (employees === null || sessionChecked) return;
-    (async () => {
+    const KEYS = sessionType
+      ? ["employees", "punches", "holidays", "companyLocation", "otMultiplier"]
+      : ["employees"];
+    if (sessionType === "admin") KEYS.push("salary", "declaration");
+    setSyncing(true);
+    const promise = (async () => {
       try {
-        const saved = await window.storage.get("session", false);
-        if (saved && saved.value) {
-          const parsed = JSON.parse(saved.value);
-          if (parsed.type === "admin") {
-            setSessionId("admin");
-            setSessionType("admin");
-          } else if (parsed.type === "employee" && employees.some((e) => e.id === parsed.id)) {
-            setSessionId(parsed.id);
-            setSessionType("employee");
+        let raw;
+        try {
+          raw = await window.storage.getAll(KEYS);
+        } catch (error) {
+          // 僅舊版後端明確不支援 getAll 才相容讀取。斷線／逾時不可放大為多輪請求。
+          if (error.code !== "UNSUPPORTED_ACTION") throw error;
+          raw = {};
+          for (const key of KEYS) {
+            const res = await window.storage.get(key, true);
+            raw[key] = res ? res.value : null;
           }
         }
-      } catch (e) {
-        // 沒有記住的登入資訊，維持在登入畫面即可
-      } finally {
-        setSessionChecked(true);
+        if (!mounted.current || currentScope.current !== syncScope) return;
+        // 整批先解析及驗證，再更新畫面；破損回應不能當成空名單。
+        if (!raw || typeof raw !== "object" || KEYS.some((key) => !Object.prototype.hasOwnProperty.call(raw, key))) {
+          throw new Error("資料不完整");
+        }
+        const values = {};
+        for (const key of KEYS) values[key] = raw[key] == null ? null : JSON.parse(raw[key]);
+        if (values.employees != null && (!Array.isArray(values.employees) || values.employees.some((emp) => !emp || typeof emp.id !== "string"))) {
+          throw new Error("員工資料格式不正確");
+        }
+        if (values.punches != null && !Array.isArray(values.punches)) throw new Error("打卡資料格式不正確");
+
+        // 未要求的欄位保留現狀；明確的 null 使用預設值；JSON 已整批驗證。
+        const parse = (value, fallback) => {
+          if (value === undefined) return undefined;
+          if (value == null) return fallback;
+          return value;
+        };
+
+        // 防止暫時性讀取到空清單（Apps Script 偶爾會回空）就把畫面上的資料清掉：
+        // 若原本已有資料、這次卻讀到空陣列，視為暫時性問題、保留原本的，避免畫面閃「尚無資料」
+        const keepIfTransientEmpty = (next, prev) =>
+          Array.isArray(next) && next.length === 0 && Array.isArray(prev) && prev.length > 0 ? prev : next;
+
+        const emp = parse(values.employees, []);
+        if (emp !== undefined) {
+          const pend = employeesPending.current;
+          if (pend && Date.now() - pend.at < 15000) {
+            // 尚有未確認的本機寫入：只有當伺服器資料「等於我們寫的內容」時才接受並解除等待；
+            // 否則視為較舊的輪詢回應，忽略之，維持畫面上剛存好的順序。
+            if (JSON.stringify(emp) === pend.sig) {
+              employeesPending.current = null;
+              setEmployees((prev) => sessionType === "employee" ? emp : keepIfTransientEmpty(emp, prev));
+            }
+          } else {
+            if (pend) employeesPending.current = null; // 超過 15 秒仍未確認，放棄等待，恢復同步
+            setEmployees((prev) => sessionType === "employee" ? emp : keepIfTransientEmpty(emp, prev));
+          }
+        }
+
+        const pun = parse(values.punches, []);
+        // 若有本機打卡編輯正在背景寫回，暫時不要用伺服器資料覆蓋，避免剛改的內容閃回舊值
+        if (pun !== undefined && !punchesWriteInFlight.current) {
+          setPunches((prev) => keepIfTransientEmpty(pun, prev));
+        }
+
+        let hol = parse(values.holidays, {});
+        if (hol !== undefined) {
+          if (Array.isArray(hol)) {
+            // 相容舊版資料格式（純日期陣列）：轉換成覆寫表
+            const migrated = {};
+            hol.forEach((d) => { migrated[d] = true; });
+            hol = migrated;
+          }
+          setHolidays(hol);
+        }
+
+        const loc = parse(values.companyLocation, null);
+        if (loc !== undefined) setCompanyLocation(loc);
+
+        const ot = parse(values.otMultiplier, 2);
+        if (ot !== undefined) setOtMultiplier(ot);
+
+        const dec = parse(values.declaration, {});
+        if (dec !== undefined) {
+          const pend = declarationPending.current;
+          if (pend && Date.now() - pend.at < 15000) {
+            if (JSON.stringify(dec) === pend.sig) declarationPending.current = null;
+          }
+          if (!declarationPending.current) {
+            setDeclaration((prev) => (dec && Object.keys(dec).length === 0 && prev && Object.keys(prev).length > 0 ? prev : dec));
+          }
+        }
+
+        setReadyScope(syncScope);
+        setSyncError("");
+        const sal = parse(values.salary, {});
+        if (sal !== undefined) {
+          const pend = salaryPending.current;
+          if (pend?.writing) return;
+          if (pend && Date.now() - pend.at >= 15000) salaryPending.current = null;
+          if (pend && Date.now() - pend.at < 15000) {
+            // 尚有未確認的本機薪資寫入：只有伺服器資料等於我們寫的內容才接受，否則忽略（避免清空剛存的）
+            if (JSON.stringify(sal) === pend.sig) salaryPending.current = null;
+            else return; // 這次輪詢的薪資是較舊的回應，整批忽略（其餘欄位已於上方套用）
+          }
+          if (!salaryPending.current) {
+            // 避免暫時性讀到空物件就清掉已載入的薪資設定
+            setSalary((prev) => (sal && Object.keys(sal).length === 0 && prev && Object.keys(prev).length > 0 ? prev : sal));
+          }
+        }
+      } catch {
+        if (mounted.current && currentScope.current === syncScope) {
+          setSyncError("暫時無法更新資料，請檢查網路後重試。登入狀態已保留。");
+        }
       }
     })();
-  }, [employees, sessionChecked]);
+    const request = { scope: syncScope, promise };
+    syncInFlight.current = request;
+    try {
+      await promise;
+    } finally {
+      if (syncInFlight.current === request) syncInFlight.current = null;
+      if (mounted.current && currentScope.current === syncScope) setSyncing(false);
+    }
+  }, [sessionChecked, sessionType, syncScope]);
+
+  // 完成一輪後才安排下一輪；手機切到背景時暫停，回到前景立即確認最新資料。
+  useEffect(() => {
+    if (!sessionChecked) return;
+    let active = true;
+    let timer;
+    const visible = () => typeof document === "undefined" || document.visibilityState !== "hidden";
+    const run = async () => {
+      clearTimeout(timer);
+      if (!active || !visible()) return;
+      await loadAll();
+      if (active && visible()) {
+        clearTimeout(timer);
+        timer = setTimeout(run, 30000);
+      }
+    };
+    const onVisibility = () => {
+      clearTimeout(timer);
+      if (visible()) run();
+    };
+    if (typeof document !== "undefined") document.addEventListener?.("visibilitychange", onVisibility);
+    run();
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      if (typeof document !== "undefined") document.removeEventListener?.("visibilitychange", onVisibility);
+    };
+  }, [loadAll, sessionChecked]);
 
   const saveEmployees = async (next) => {
     const payload = JSON.stringify(next);
@@ -588,7 +653,12 @@ export default function TimeClockApp() {
     try {
       await window.storage.set("punches", JSON.stringify(next), true);
     } catch (e) {
-      flash("打卡儲存失敗，請稍後再試", "error");
+      if (e.resultUnknown) {
+        flash("打卡結果尚未確認，請先核對更新後的紀錄，避免重複送出", "error");
+        await loadAll();
+      } else {
+        flash("打卡儲存失敗，請稍後再試", "error");
+      }
     }
   };
 
@@ -679,8 +749,9 @@ export default function TimeClockApp() {
   const rememberSession = async (id, type) => {
     try {
       await window.storage.set("session", JSON.stringify({ id, type }), false);
+      setSessionNotice("");
     } catch (e) {
-      // 記住登入狀態失敗不影響本次使用，忽略即可
+      setSessionNotice("此裝置無法保存登入，關閉後可能需要重新登入。");
     }
   };
 
@@ -723,22 +794,31 @@ export default function TimeClockApp() {
     setBusy(true);
     try {
       // 伺服器端原子審核，避免與其他人同時申請時互相覆蓋
-      const fresh = await window.storage.reviewEmployee(id, decision);
+      let fresh;
+      try {
+        fresh = await window.storage.reviewEmployee(id, decision);
+      } catch (error) {
+        if (error.code !== "UNSUPPORTED_ACTION") throw error;
+        // 僅舊後端明確不支援時相容；逾時不能轉成整包覆寫。
+        fresh = decision === "approve"
+          ? (employees || []).map((e) => (e.id === id ? { ...e, status: "active" } : e))
+          : (employees || []).filter((e) => e.id !== id);
+        await window.storage.set("employees", JSON.stringify(fresh), true);
+      }
       setEmployees(fresh);
+      flash(decision === "approve" ? `已通過「${target ? target.name : ""}」的申請` : `已拒絕「${target ? target.name : ""}」的申請`);
     } catch (e) {
-      // 後端若尚未支援 reviewEmployee，退回本地修改後整包寫回（仍可運作，但少了原子保護）
-      const next = decision === "approve"
-        ? (employees || []).map((e) => (e.id === id ? { ...e, status: "active" } : e))
-        : (employees || []).filter((e) => e.id !== id);
-      await saveEmployees(next);
+      flash(e.resultUnknown ? "審核結果尚未確認，請重新整理核對後再操作" : "審核失敗，請稍後再試", "error");
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
-    flash(decision === "approve" ? `已通過「${target ? target.name : ""}」的申請` : `已拒絕「${target ? target.name : ""}」的申請`);
   };
 
   const handleLogout = async () => {
+    currentScope.current = ":";
     setSessionId("");
     setSessionType("");
+    setSessionNotice("");
     setTab("punch");
     try {
       await window.storage.delete("session", false);
@@ -914,7 +994,16 @@ export default function TimeClockApp() {
     }
   };
 
-  const loading = employees === null || punches === null || holidays === null || otMultiplier === null || !sessionChecked;
+  const loading = !sessionChecked || (!!sessionType && (
+    readyScope !== syncScope || employees === null || punches === null || holidays === null ||
+    otMultiplier === null || (isAdmin && salary === null)
+  ));
+  const awaitingEmployee = sessionType === "employee" && !sessionEmp;
+  const retryButtonStyle = {
+    margin: 8, padding: "10px 14px", minHeight: 44, borderRadius: 8,
+    border: `1px solid ${COLORS.border}`, background: COLORS.panelRaised,
+    color: COLORS.text, cursor: "pointer", fontSize: 14,
+  };
 
   return (
     <div style={{
@@ -946,22 +1035,38 @@ export default function TimeClockApp() {
             <div style={{ fontSize: 12, letterSpacing: 2, color: COLORS.textFaint, textTransform: "uppercase" }}>time clock</div>
             <div style={{ fontSize: 22, fontWeight: 600, color: COLORS.text }}>員工打卡系統</div>
           </div>
-          {(sessionEmp || isAdmin) && (
+          {(sessionEmp || isAdmin || sessionId) && (
             <button
               onClick={handleLogout}
               style={{ background: "none", border: "none", color: COLORS.textFaint, fontSize: 12, cursor: "pointer" }}
             >
-              {isAdmin ? `${ADMIN_ACCOUNT.name}（管理員）` : sessionEmp.name} · 登出
+              {isAdmin ? `${ADMIN_ACCOUNT.name}（管理員）` : (sessionEmp?.name || "已記住帳號")} · 登出
             </button>
           )}
         </div>
 
+        {sessionNotice && <div role="status" style={{ color: COLORS.textMuted, fontSize: 13, padding: "12px 0" }}>{sessionNotice}</div>}
+        {syncError && (
+          <div role="status" style={{ color: COLORS.textMuted, fontSize: 13, lineHeight: 1.8, padding: "12px 0" }}>
+            <div>{syncError}</div>
+            <button onClick={loadAll} disabled={syncing} style={retryButtonStyle}>重新整理</button>
+          </div>
+        )}
         {loading ? (
-          <div style={{ textAlign: "center", padding: "60px 0", color: COLORS.textMuted, fontSize: 14 }}>載入中…</div>
+          <div style={{ textAlign: "center", padding: "60px 0", color: COLORS.textMuted, fontSize: 14 }}>
+            {syncError ? "資料尚未載入完成" : "正在載入打卡資料…"}
+          </div>
+        ) : awaitingEmployee ? (
+          <div role="status" style={{ textAlign: "center", padding: "40px 0", color: COLORS.textMuted, fontSize: 14, lineHeight: 1.8 }}>
+            <div>正在確認登入帳號</div>
+            <div>暫時找不到員工資料，已保留登入狀態，確認後會自動開啟打卡畫面。</div>
+            <button onClick={loadAll} disabled={syncing} style={retryButtonStyle}>重新確認</button>
+            <button onClick={handleLogout} style={retryButtonStyle}>切換帳號</button>
+          </div>
         ) : !sessionEmp && !isAdmin ? (
           <>
             <Toast msg={toast} tone={toastTone} />
-            <LoginView employees={employees} onLogin={handleLogin} flash={flash} />
+            <LoginView employees={employees || []} onLogin={handleLogin} flash={flash} />
           </>
         ) : isAdmin ? (
           <>

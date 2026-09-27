@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-Hant">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>打卡修正測試（虛構資料）</title>
+<div id="root"></div>
+<script type="module">
+  import React from 'react';
+  import { createRoot } from 'react-dom/client';
+  import App from '../src/App.jsx';
+  const scenario = new URLSearchParams(location.search).get('state') || 'employee';
+  const employee = { id: 'demo-employee', name: '測試員工', phone: '0000000000', status: 'active' };
+  let calls = 0;
+  let session = scenario === 'login' ? null : JSON.stringify({ id: employee.id, type: 'employee' });
+  window.storage = {
+    async get() { return session ? { value: session } : null; },
+    async getAll(keys) {
+      calls++;
+      if (scenario === 'offline') throw new Error('simulated offline');
+      const missing = scenario === 'missing' || (scenario === 'recover' && calls === 1);
+      const data = { employees: JSON.stringify(missing ? [] : [employee]), punches: '[]', holidays: '{}', companyLocation: null, otMultiplier: '2', salary: '{}', declaration: '{}' };
+      return Object.fromEntries(keys.map(key => [key, data[key]]));
+    },
+    async set(key, value) { if (key === 'session') session = value; },
+    async delete() { session = null; },
+    async findOrCreateEmployee() { return { employee, employees: [employee], created: false }; },
+    async appendPunch() { throw new Error('Visual test does not write punches'); },
+  };
+  createRoot(document.getElementById('root')).render(React.createElement(React.StrictMode, null, React.createElement(App)));
+</script>
+</html>

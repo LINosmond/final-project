@@ -102,7 +102,7 @@ test('儲存不固定工時、連點只送一次；列印／CSV使用最新考�
 test('薪資寫入成功前不報成功，失敗不覆蓋原資料，可重試', async () => {
   let resolveWrite, rejectWrite, view;
   global.window = { storage: {
-    getAll: async () => ({ employees: JSON.stringify([emp]), punches: '[]', holidays: '{}', otMultiplier: '2', salary: JSON.stringify(salary), declaration: '{}' }),
+    getAll: async () => ({ employees: JSON.stringify([emp]), punches: '[]', holidays: '{}', companyLocation: null, otMultiplier: '2', salary: JSON.stringify(salary), declaration: '{}' }),
     get: async () => ({ value: JSON.stringify({ type: 'admin' }) }),
     set: () => new Promise((res, rej) => { resolveWrite = res; rejectWrite = rej; }),
   } };
