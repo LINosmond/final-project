@@ -1659,6 +1659,27 @@ function salaryCalc(rec) {
   return { gross, net, netRounded: Math.ceil(net / 100) * 100 };
 }
 
+// 報表改用「全螢幕覆蓋層＋iframe」顯示，而不是開新分頁：手機 Safari 開新分頁後沒有返回鍵、回不去。
+// 覆蓋層頂端固定「返回」與「列印」鈕，返回只是把覆蓋層移除，回到原本的系統畫面。
+function showReportOverlay(html) {
+  const wrap = document.createElement("div");
+  wrap.style.cssText = "position:fixed;inset:0;z-index:99999;background:#fff;display:flex;flex-direction:column;";
+  const bar = document.createElement("div");
+  bar.style.cssText = "display:flex;gap:8px;justify-content:center;padding:calc(env(safe-area-inset-top,0px) + 8px) 8px 8px;background:#fff;border-bottom:1px solid #ccc;";
+  const mk = (t) => { const b = document.createElement("button"); b.textContent = t; b.style.cssText = "padding:10px 24px;font-size:16px;border:1px solid #999;border-radius:8px;background:#f5f5f5;color:#111;"; return b; };
+  const back = mk("← 返回"), pr = mk("🖨 列印 / 存成 PDF");
+  const frame = document.createElement("iframe");
+  frame.style.cssText = "flex:1;width:100%;border:0;background:#fff;";
+  frame.srcdoc = html;
+  const prevOverflow = document.body.style.overflow;
+  document.body.style.overflow = "hidden";
+  back.onclick = () => { document.body.style.overflow = prevOverflow; wrap.remove(); };
+  pr.onclick = () => { try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch (e) { window.print(); } };
+  bar.append(back, pr);
+  wrap.append(bar, frame);
+  document.body.appendChild(wrap);
+}
+
 // ===== 申報薪資表：以「當月真實打卡」為基礎，刪掉部分已打卡的天數，使實發薪資落在 29500~33000，
 // 產生一份「固定」的申報快照（存到後台，之後不再變動，除非按「再次調整」）。完全不動真實打卡/薪資資料。=====
 
@@ -1792,10 +1813,6 @@ table.card tr.hl th, table.card tr.hl td { background:#f3f3f3; }
 @media print { .noprint { display:none; } }
 </style></head>
 <body>
-<div class="noprint" style="position:sticky;top:0;z-index:9;background:#fff;padding:8px;display:flex;gap:8px;justify-content:center;border-bottom:1px solid #ccc;">
-<button onclick="try{window.close();}catch(e){} setTimeout(function(){location.href='${window.location.origin}${window.location.pathname}';},300);" style="padding:8px 22px;font-size:15px;cursor:pointer;">← 返回</button>
-<button onclick="window.print()" style="padding:8px 22px;font-size:15px;cursor:pointer;">列印 / 存成 PDF</button>
-</div>
 <div class="page"><div class="fit"><h1>${year} 年 ${month} 月　申報打卡紀錄</h1>
 <div class="pgrid">${pcards || '<div>（無可申報的時薪員工）</div>'}</div></div></div>
 <div class="page"><div class="fit"><h1>${year} 年 ${month} 月　申報薪資表</h1>
@@ -1812,12 +1829,10 @@ function fitPages(){
     else { el.parentNode.style.height=h+'px'; }
   }
 }
-window.onload=function(){setTimeout(function(){fitPages();try{window.print();}catch(e){}},500);};
+window.onload=function(){setTimeout(function(){fitPages();},500);};
 </script>
 </body></html>`;
-  const w = window.open("", "_blank");
-  if (!w) { alert("請允許彈出視窗，才能開啟申報薪資表"); return; }
-  w.document.open(); w.document.write(html); w.document.close();
+  showReportOverlay(html);
 }
 
 // 薪資表：選員工＋月份，工作/加班時數自動帶入該月考勤。時薪、加班時薪、勞保、健保、職務為
@@ -1937,10 +1952,6 @@ table.card tr.hl th, table.card tr.hl td { font-weight:bold; background:#f3f3f3;
 @media print { .noprint { display:none; } }
 </style></head>
 <body>
-<div class="noprint" style="position:sticky;top:0;z-index:9;background:#fff;padding:8px;display:flex;gap:8px;justify-content:center;border-bottom:1px solid #ccc;">
-<button onclick="try{window.close();}catch(e){} setTimeout(function(){location.href='${window.location.origin}${window.location.pathname}';},300);" style="padding:8px 22px;font-size:15px;cursor:pointer;">← 返回</button>
-<button onclick="window.print()" style="padding:8px 22px;font-size:15px;cursor:pointer;">列印 / 存成 PDF</button>
-</div>
 <div class="page"><div class="fit">
 <h1>${year} 年 ${month} 月　薪資表</h1>
 <div class="grid">${cards}</div>
@@ -1957,14 +1968,10 @@ function fitPages(){
     if (h>TARGET) el.style.zoom = (TARGET/h);
   }
 }
-window.onload=function(){setTimeout(function(){fitPages();try{window.print();}catch(e){}},500);};
+window.onload=function(){setTimeout(function(){fitPages();},500);};
 </script>
 </body></html>`;
-    const w = window.open("", "_blank");
-    if (!w) { alert("請允許彈出視窗，才能開啟列印總表"); return; }
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
+    showReportOverlay(html);
   };
 
   const exportSalaryCsv = () => {
