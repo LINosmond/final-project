@@ -1615,8 +1615,11 @@ function salaryEffectiveRecord(e, salary, punches, year, month, multiplier, over
   const d = empSal.defaults || {};
   const seed = SEED_DEFAULTS[e.name] || {};
   const pick = (dv, sv, fb) => (dv != null ? dv : (sv != null ? sv : fb));
-  const dLabor = pick(d.laborIns, seed.laborIns, 0);
-  const dHealth = pick(d.healthIns, seed.healthIns, 0);
+  // 勞保／健保「逐月獨立」：該月有存就用該月；沒存則預填「上一個有存過的月份」的值，再沒有才用固定設定／預設。
+  const prevKey = Object.keys(empSal).filter((k) => /^\d{4}-\d{2}$/.test(k) && k < ym && empSal[k] && (empSal[k].laborIns != null || empSal[k].healthIns != null)).sort().pop();
+  const prev = prevKey ? empSal[prevKey] : {};
+  const dLabor = pick(prev.laborIns, pick(d.laborIns, seed.laborIns, 0), 0);
+  const dHealth = pick(prev.healthIns, pick(d.healthIns, seed.healthIns, 0), 0);
   const dHourly = pick(d.hourlyRate, seed.hourlyRate, 0);
   const dDuty = pick(d.dutyAllowance, seed.dutyAllowance, 0);
   const dSpecial = pick(d.specialBonus, seed.specialBonus, 0);
@@ -1715,7 +1718,8 @@ function buildDeclarationSnapshot(list, salary, punches, year, month, multiplier
     }
     const H = salNum(eff.hourlyRate);
     if (H <= 0 || real.length === 0) return; // 未設時薪或無真實打卡者略過
-    const carWash = salNum(eff.carWash);
+    // 申報用洗車獎金：隨機 1~1000（只寫進這份固定的快照，不動真實薪資）；勞健保沿用該月原本的值
+    const carWash = 1 + Math.floor(Math.random() * 1000);
     const fixed = carWash + salNum(eff.dutyAllowance) + salNum(eff.specialBonus) - salNum(eff.laborIns) - salNum(eff.healthIns);
     const maxMins = ((HI - fixed) / H) * 60; // 實發不超過 33000 對應的工時上限（分鐘）
     const kept = real.slice();
