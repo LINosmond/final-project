@@ -91,7 +91,8 @@ function getCurrentPosition() {
   });
 }
 
-const ADMIN_ACCOUNT = { name: "上盛", password: "451689" };
+// 管理員密碼不放在前端：由後端 Script Properties 的 ADMIN_PASSWORD 驗證。
+const ADMIN_ACCOUNT = { name: "上盛" };
 
 // 台灣國定假日自動偵測
 // 2025、2026 為行政院人事行政總處公告之精確日期（含補假、小年夜等）
@@ -392,6 +393,9 @@ export default function TimeClockApp() {
   const [sessionId, setSessionId] = useState("");
   const [sessionType, setSessionType] = useState(""); // "employee" | "admin"
   const [sessionChecked, setSessionChecked] = useState(false);
+  const [sessionPw, setSessionPw] = useState(""); // 員工登入時的手機號碼（僅存在本機，查自己薪資時由後端驗證身分用）
+  const [salaryVisible, setSalaryVisible] = useState(false); // 管理員是否開放員工查看上個月薪資
+  const salaryVisiblePending = useRef(0);
   const [sessionNotice, setSessionNotice] = useState("");
   const [syncError, setSyncError] = useState("");
   const [syncing, setSyncing] = useState(false);
@@ -431,10 +435,13 @@ export default function TimeClockApp() {
         const saved = await window.storage.get("session", false);
         const parsed = saved?.value ? JSON.parse(saved.value) : null;
         if (!active) return;
-        if (parsed?.type === "admin") {
+        if (parsed?.type === "admin" && typeof parsed.pw === "string" && parsed.pw) {
+          // 管理員密碼要先交給資料層，之後的請求才有管理員權限（沒有密碼的舊紀錄需重新登入）
+          window.storage.setAdminPassword(parsed.pw);
           setSessionId("admin");
           setSessionType("admin");
         } else if (parsed?.type === "employee" && typeof parsed.id === "string" && parsed.id) {
+          setSessionPw(typeof parsed.pw === "string" ? parsed.pw : "");
           setSessionId(parsed.id);
           setSessionType("employee");
         }
@@ -470,7 +477,7 @@ export default function TimeClockApp() {
       return loadAll();
     }
     const KEYS = sessionType
-      ? ["employees", "punches", "holidays", "companyLocation", "otMultiplier"]
+      ? ["employees", "punches", "holidays", "companyLocation", "otMultiplier", "salaryVisible"]
       : ["employees"];
     if (sessionType === "admin") KEYS.push("salary", "declaration");
     setSyncing(true);
@@ -511,6 +518,9 @@ export default function TimeClockApp() {
         // 若原本已有資料、這次卻讀到空陣列，視為暫時性問題、保留原本的，避免畫面閃「尚無資料」
         const keepIfTransientEmpty = (next, prev) =>
           Array.isArray(next) && next.length === 0 && Array.isArray(prev) && prev.length > 0 ? prev : next;
+
+        const sv = parse(values.salaryVisible, false);
+        if (sv !== undefined && Date.now() - salaryVisiblePending.current > 8000) setSalaryVisible(sv === true);
 
         const emp = parse(values.employees, []);
         if (emp !== undefined) {
@@ -725,6 +735,7 @@ export default function TimeClockApp() {
       setSalary(next);
       salaryPending.current = { sig: payload, at: Date.now() };
       flash("已儲存薪資");
+      if (salaryVisible) publishLastMonthSalary(next).catch(() => {}); // 已開放時，同步更新員工可見的明細
     } catch (e) {
       salaryPending.current = null; // 寫入失敗，恢復接受伺服器資料
       flash("薪資儲存失敗，請稍後再試", "error");
@@ -746,9 +757,47 @@ export default function TimeClockApp() {
     }
   };
 
-  const rememberSession = async (id, type) => {
+  // 發佈「上個月」每位員工的薪資明細到受保護的 salaryPublished（只有後端驗證過的員工，才能查到自己那一筆）
+  const publishLastMonthSalary = async (salaryData) => {
+    const now = new Date();
+    let py = now.getFullYear(), pm = now.getMonth(); // getMonth() 為 0 起算＝上個月的 1 起算月份
+    if (pm < 1) { pm = 12; py -= 1; }
+    const ym = `${py}-${pad2(pm)}`;
+    const out = {};
+    (employees || []).filter((e) => e.status !== "pending").forEach((e) => {
+      const rec = salaryEffectiveRecord(e, salaryData, punches || [], py, pm, otMultiplier ?? 2, holidays || {});
+      const cc = salaryCalc(rec);
+      out[e.id] = { ...rec, gross: cc.gross, net: cc.net, netRounded: cc.netRounded };
+    });
+    await window.storage.set("salaryPublished", JSON.stringify({ [ym]: out }), true);
+  };
+
+  const saveSalaryVisible = async (v) => {
+    setSalaryVisible(v);
+    salaryVisiblePending.current = Date.now();
     try {
-      await window.storage.set("session", JSON.stringify({ id, type }), false);
+      if (v) await publishLastMonthSalary(salary || {}); // 先發佈資料再開放
+      else await window.storage.set("salaryPublished", "{}", true); // 關閉時一併清掉已發佈的明細
+      await window.storage.set("salaryVisible", JSON.stringify(v), true);
+      flash(v ? "已開放員工查看上個月薪資" : "已關閉員工查看薪資");
+    } catch (e) {
+      setSalaryVisible(!v);
+      flash("設定失敗，請稍後再試", "error");
+    }
+  };
+
+  const republishSalary = async () => {
+    try {
+      await publishLastMonthSalary(salary || {});
+      flash("已更新員工可見的薪資");
+    } catch (e) {
+      flash("更新失敗，請稍後再試", "error");
+    }
+  };
+
+  const rememberSession = async (id, type, pw) => {
+    try {
+      await window.storage.set("session", JSON.stringify({ id, type, pw: pw || "" }), false);
       setSessionNotice("");
     } catch (e) {
       setSessionNotice("此裝置無法保存登入，關閉後可能需要重新登入。");
@@ -756,10 +805,19 @@ export default function TimeClockApp() {
   };
 
   const handleLogin = async (name, phone) => {
-    if (name === ADMIN_ACCOUNT.name && phone === ADMIN_ACCOUNT.password) {
+    if (name === ADMIN_ACCOUNT.name) {
+      // 管理員密碼由後端驗證（前端不含密碼）
+      let ok = false;
+      try {
+        ok = await window.storage.adminLogin(phone);
+      } catch (e) {
+        flash(/not configured/i.test(e.message) ? "後端尚未設定管理員密碼（ADMIN_PASSWORD），請先到 Apps Script 設定" : "登入失敗，請稍後再試", "error");
+        return "wrong";
+      }
+      if (!ok) return "wrong";
       setSessionId("admin");
       setSessionType("admin");
-      await rememberSession("admin", "admin");
+      await rememberSession("admin", "admin", phone);
       flash(`管理員登入成功`);
       return "ok";
     }
@@ -777,9 +835,10 @@ export default function TimeClockApp() {
     if (!result.created && emp.phone !== phone) {
       return "wrong";
     }
+    setSessionPw(phone);
     setSessionId(emp.id);
     setSessionType("employee");
-    await rememberSession(emp.id, "employee");
+    await rememberSession(emp.id, "employee", phone);
     // 待審核帳號：登入後停在「等待審核」畫面（不能打卡），管理員通過後畫面會自動切換
     if (emp.status === "pending") {
       flash(result.created ? "已送出申請，請等待管理員審核通過" : "你的帳號正在等待管理員審核");
@@ -816,6 +875,8 @@ export default function TimeClockApp() {
 
   const handleLogout = async () => {
     currentScope.current = ":";
+    window.storage.setAdminPassword("");
+    setSessionPw("");
     setSessionId("");
     setSessionType("");
     setSessionNotice("");
@@ -1093,6 +1154,9 @@ export default function TimeClockApp() {
               onSaveSalary={saveSalaryRecord}
               declaration={declaration}
               onSaveDeclaration={saveDeclaration}
+              salaryVisible={salaryVisible}
+              onSaveSalaryVisible={saveSalaryVisible}
+              onRepublishSalary={republishSalary}
               busy={busy}
             />
           </>
@@ -1104,7 +1168,7 @@ export default function TimeClockApp() {
         ) : (
           <>
             <div style={{ display: "flex", background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 4, marginBottom: 16 }}>
-              {[["punch", "打卡"], ["admin", "我的紀錄"]].map(([key, label]) => (
+              {[["punch", "打卡"], ["admin", "我的紀錄"], ...(salaryVisible ? [["salary", "薪資"]] : [])].map(([key, label]) => (
                 <button
                   key={key}
                   onClick={() => setTab(key)}
@@ -1140,6 +1204,8 @@ export default function TimeClockApp() {
                 todayPunches={employeePunchesToday}
                 locationRestricted={!!(companyLocation && companyLocation.radius)}
               />
+            ) : tab === "salary" && salaryVisible ? (
+              <EmployeeSalaryTab name={sessionEmp.name} pw={sessionPw} />
             ) : (
               <AdminView employees={employees} punches={punches} holidays={holidays} otMultiplier={otMultiplier} lockedEmployeeId={sessionEmp.id} />
             )}
@@ -2062,7 +2128,7 @@ window.onload=function(){setTimeout(function(){fitPages();},500);};
   );
 }
 
-function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, onAddEmployee, onRemoveEmployee, onUpdateDay, onToggleHoliday, onExportBackup, onImportBackup, onReviewEmployee, onMoveEmployee, companyLocation, onSaveLocation, onClearLocation, otMultiplier, onSaveOtMultiplier, salary, onSaveSalary, declaration, onSaveDeclaration, busy }) {
+function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, onAddEmployee, onRemoveEmployee, onUpdateDay, onToggleHoliday, onExportBackup, onImportBackup, onReviewEmployee, onMoveEmployee, companyLocation, onSaveLocation, onClearLocation, otMultiplier, onSaveOtMultiplier, salary, onSaveSalary, declaration, onSaveDeclaration, salaryVisible, onSaveSalaryVisible, onRepublishSalary, busy }) {
   const multiplier = otMultiplier ?? 2;
   const today = new Date();
   const overrides = holidays || {};
@@ -2192,6 +2258,7 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
 
   const settingsSection = (
     <>
+      <SalaryVisibilityPanel visible={!!salaryVisible} onToggle={onSaveSalaryVisible} onRepublish={onRepublishSalary} />
       <DeclarationPanel employees={activeEmployees} salary={salary} punches={punches} multiplier={multiplier} overrides={overrides} declaration={declaration} onSaveDeclaration={onSaveDeclaration} />
       <LocationPanel companyLocation={companyLocation} onSave={onSaveLocation} onClear={onClearLocation} busy={busy} />
       <OvertimeRatePanel multiplier={multiplier} onSave={onSaveOtMultiplier} busy={busy} />
@@ -2929,6 +2996,84 @@ function AccountListPanel({ employees, onMove }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// 管理員設定：是否開放員工查看「上個月」薪資（預設關閉）。後端也會檢查這個開關，不只是前端隱藏分頁。
+function SalaryVisibilityPanel({ visible, onToggle, onRepublish }) {
+  return (
+    <div style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, marginBottom: 14 }}>
+      <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 8 }}>開放員工查看薪資</div>
+      <div style={{ fontSize: 11, color: COLORS.textFaint, lineHeight: 1.6, marginBottom: 10 }}>
+        開啟後，員工在打卡頁會多一個「薪資」分頁，只能看到<b>自己</b>上個月的薪資明細。預設關閉。
+        開放後若你又修改了薪資或考勤，按「更新員工可見的薪資」同步（儲存薪資時也會自動同步）。
+      </div>
+      <button
+        onClick={() => onToggle(!visible)}
+        style={{ width: "100%", padding: "10px 0", borderRadius: 8, border: visible ? "none" : `1px solid ${COLORS.brassDim}`, background: visible ? COLORS.brass : "none", color: visible ? "#20160b" : COLORS.brass, fontSize: 14, fontWeight: 700, cursor: "pointer", marginBottom: visible ? 8 : 0 }}
+      >
+        {visible ? "✅ 已開放（點此關閉）" : "目前關閉（點此開放）"}
+      </button>
+      {visible && (
+        <button
+          onClick={onRepublish}
+          style={{ width: "100%", padding: "9px 0", borderRadius: 8, border: `1px solid ${COLORS.brassDim}`, background: "none", color: COLORS.brass, fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+        >
+          更新員工可見的薪資
+        </button>
+      )}
+    </div>
+  );
+}
+
+// 員工端「薪資」分頁：向後端以「姓名＋手機號碼」驗證身分後，只取得自己上個月的薪資。
+function EmployeeSalaryTab({ name, pw }) {
+  const [state, setState] = useState({ loading: true, error: "", ym: "", rec: null });
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!pw) { setState({ loading: false, error: "請先登出再重新登入一次，才能查看薪資。", ym: "", rec: null }); return; }
+      try {
+        const res = await window.storage.getMySalary(name, pw);
+        if (alive) setState({ loading: false, error: "", ym: res.ym || "", rec: res.record || null });
+      } catch (e) {
+        const msg = e.message === "disabled" ? "管理員目前未開放查看薪資。"
+          : e.message === "unauthorized" ? "身分驗證失敗，請登出後重新登入。"
+          : "讀取失敗，請稍後再試。";
+        if (alive) setState({ loading: false, error: msg, ym: "", rec: null });
+      }
+    })();
+    return () => { alive = false; };
+  }, [name, pw]);
+
+  const box = { background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 14px" };
+  if (state.loading) return <div style={{ ...box, textAlign: "center", color: COLORS.textMuted, fontSize: 13 }}>讀取中…</div>;
+  if (state.error) return <div style={{ ...box, textAlign: "center", color: COLORS.red, fontSize: 13 }}>{state.error}</div>;
+  if (!state.rec) return <div style={{ ...box, textAlign: "center", color: COLORS.textMuted, fontSize: 13 }}>上個月（{state.ym}）的薪資尚未公布。</div>;
+
+  const r = state.rec;
+  const n = (x) => { const v = Number(x); return isFinite(v) ? v : 0; };
+  const monthly = r.position === "月薪" || r.position === "站長";
+  const rows = [
+    ["工作時數", n(r.workHours)], [monthly ? "月薪" : "時薪單價", n(r.hourlyRate)],
+    ["加班時數", n(r.otHours)], ["加班時薪", n(r.otRate)],
+    ["洗車獎金", n(r.carWash)], ["職務加級", n(r.dutyAllowance)], ["特別獎金", n(r.specialBonus)],
+    ["應發金額", n(r.gross), true], ["勞保", n(r.laborIns)], ["健保", n(r.healthIns)], ["借支", n(r.advance)],
+    ["實發金額", n(r.netRounded), true],
+  ];
+  return (
+    <div style={box}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+        <span style={{ fontSize: 15, fontWeight: 700, color: COLORS.text }}>{name} 薪資單</span>
+        <span style={{ fontSize: 12, color: COLORS.textFaint }}>{state.ym.replace("-", " 年 ")} 月</span>
+      </div>
+      {rows.map(([k, v, strong]) => (
+        <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${COLORS.border}` }}>
+          <span style={{ fontSize: 13, color: strong ? COLORS.text : COLORS.textMuted, fontWeight: strong ? 700 : 400 }}>{k}</span>
+          <span style={{ fontSize: 14, fontFamily: "'Space Mono', monospace", color: strong ? COLORS.brass : COLORS.text, fontWeight: strong ? 700 : 400 }}>{v.toLocaleString()}</span>
+        </div>
+      ))}
     </div>
   );
 }

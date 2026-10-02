@@ -5,6 +5,9 @@ const API_URL = import.meta.env.VITE_SHEETS_API_URL;
 const API_KEY = import.meta.env.VITE_SHEETS_API_KEY || "";
 
 const LOCAL_PREFIX = "tc_local_";
+
+// 管理員登入後的密碼只放在記憶體，之後每個請求都帶給後端驗證（後端才是真正的權限判斷）。
+let adminPassword = "";
 const REQUEST_TIMEOUT_MS = 20000;
 
 function apiError(message, code, retryable = false) {
@@ -37,7 +40,7 @@ async function callApiOnce(action, extra = {}) {
         method: "POST",
         // 用 text/plain 避免瀏覽器對 Apps Script 發出 CORS 預檢請求（preflight）
         headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action, apiKey: API_KEY, ...extra }),
+        body: JSON.stringify({ action, apiKey: API_KEY, ...(adminPassword ? { adminPassword } : {}), ...extra }),
         signal: controller.signal,
       });
       if (!res.ok) {
@@ -72,7 +75,7 @@ async function callApiOnce(action, extra = {}) {
 // 只為讀取與後端已去重的操作重試一次。整包覆寫、刪除、審核不自動重送，
 // 避免「伺服器已完成但回覆遺失」時再次覆蓋期間其他人的修改。
 async function callApi(action, extra = {}) {
-  const readOnly = action === "get" || action === "getAll";
+  const readOnly = action === "get" || action === "getAll" || action === "adminLogin" || action === "getMySalary";
   const idempotent = (action === "appendPunch" && Boolean(extra.entry?.id)) ||
     (action === "findOrCreateEmployee" && Boolean(extra.name && extra.phone));
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -146,6 +149,26 @@ const storage = {
   async appendPunch(entry) {
     const data = await callApi("appendPunch", { entry });
     return data.punches;
+  },
+
+  setAdminPassword(pw) { adminPassword = pw || ""; },
+
+  // 管理員登入：由後端比對密碼。回傳 true / false；後端沒設定 ADMIN_PASSWORD 時丟出錯誤。
+  async adminLogin(pw) {
+    adminPassword = pw;
+    try {
+      const data = await callApi("adminLogin", {});
+      if (!data.admin) adminPassword = "";
+      return !!data.admin;
+    } catch (e) {
+      adminPassword = "";
+      throw e;
+    }
+  },
+
+  // 員工查看自己上個月薪資：以姓名＋手機號碼由後端驗證身分（不傳員工 ID）。
+  async getMySalary(name, phone) {
+    return await callApi("getMySalary", { name, phone });
   },
 
   // 管理員審核用的原子操作：decision 為 "approve"（通過）或 "reject"（拒絕移除）。
