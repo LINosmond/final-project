@@ -1792,6 +1792,10 @@ table.card tr.hl th, table.card tr.hl td { background:#f3f3f3; }
 @media print { .noprint { display:none; } }
 </style></head>
 <body>
+<div class="noprint" style="position:sticky;top:0;z-index:9;background:#fff;padding:8px;display:flex;gap:8px;justify-content:center;border-bottom:1px solid #ccc;">
+<button onclick="try{window.close();}catch(e){} setTimeout(function(){location.href='${window.location.origin}${window.location.pathname}';},300);" style="padding:8px 22px;font-size:15px;cursor:pointer;">← 返回</button>
+<button onclick="window.print()" style="padding:8px 22px;font-size:15px;cursor:pointer;">列印 / 存成 PDF</button>
+</div>
 <div class="page"><div class="fit"><h1>${year} 年 ${month} 月　申報打卡紀錄</h1>
 <div class="pgrid">${pcards || '<div>（無可申報的時薪員工）</div>'}</div></div></div>
 <div class="page"><div class="fit"><h1>${year} 年 ${month} 月　申報薪資表</h1>
@@ -1933,6 +1937,10 @@ table.card tr.hl th, table.card tr.hl td { font-weight:bold; background:#f3f3f3;
 @media print { .noprint { display:none; } }
 </style></head>
 <body>
+<div class="noprint" style="position:sticky;top:0;z-index:9;background:#fff;padding:8px;display:flex;gap:8px;justify-content:center;border-bottom:1px solid #ccc;">
+<button onclick="try{window.close();}catch(e){} setTimeout(function(){location.href='${window.location.origin}${window.location.pathname}';},300);" style="padding:8px 22px;font-size:15px;cursor:pointer;">← 返回</button>
+<button onclick="window.print()" style="padding:8px 22px;font-size:15px;cursor:pointer;">列印 / 存成 PDF</button>
+</div>
 <div class="page"><div class="fit">
 <h1>${year} 年 ${month} 月　薪資表</h1>
 <div class="grid">${cards}</div>
