@@ -1718,8 +1718,8 @@ function buildDeclarationSnapshot(list, salary, punches, year, month, multiplier
     }
     const H = salNum(eff.hourlyRate);
     if (H <= 0 || real.length === 0) return; // 未設時薪或無真實打卡者略過
-    // 申報用洗車獎金：隨機 1~1000（只寫進這份固定的快照，不動真實薪資）；勞健保沿用該月原本的值
-    const carWash = 1 + Math.floor(Math.random() * 1000);
+    // 申報用洗車獎金：隨機 600~1000（只寫進這份固定的快照，不動真實薪資）；勞健保沿用該月原本的值
+    const carWash = 600 + Math.floor(Math.random() * 401);
     const fixed = carWash + salNum(eff.dutyAllowance) + salNum(eff.specialBonus) - salNum(eff.laborIns) - salNum(eff.healthIns);
     const maxMins = ((HI - fixed) / H) * 60; // 實發不超過 33000 對應的工時上限（分鐘）
     const kept = real.slice();
