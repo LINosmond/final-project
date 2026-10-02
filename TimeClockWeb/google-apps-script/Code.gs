@@ -162,7 +162,25 @@ function throttleFail_(id) {
   cache.put(throttleKey_(id), String(n), 600);
 }
 
+// 管理員登入成功後發一個隨機憑證（30 天有效），之後的請求只帶憑證、不帶密碼。
+// 憑證驗證不受「猜錯密碼鎖定」影響，所以別人故意輸錯密碼，也無法把已登入的管理員鎖在外面。
+var ADMIN_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+function tokenOk_(token) {
+  if (!token || !getAdminPassword_()) return false;
+  var props = PropertiesService.getScriptProperties();
+  var exp = Number(props.getProperty("admintok:" + token) || 0);
+  if (exp > Date.now()) return true;
+  if (exp) props.deleteProperty("admintok:" + token);
+  return false;
+}
+function issueToken_() {
+  var token = Utilities.getUuid() + Utilities.getUuid();
+  PropertiesService.getScriptProperties().setProperty("admintok:" + token, String(Date.now() + ADMIN_TOKEN_TTL_MS));
+  return token;
+}
+
 function adminOk_(body) {
+  if (body.adminToken && tokenOk_(String(body.adminToken))) return true;
   var pw = getAdminPassword_();
   if (!pw || body.adminPassword == null || body.adminPassword === "") return false;
   if (throttleBlocked_("admin")) return false;
@@ -321,7 +339,13 @@ function doPost(e) {
       // 管理員登入驗證：密碼只在伺服器比對
       if (action === "adminLogin") {
         if (!getAdminPassword_()) return jsonResponse_({ ok: false, error: "admin password not configured" });
-        return jsonResponse_({ ok: true, admin: isAdmin });
+        if (!isAdmin) return jsonResponse_({ ok: true, admin: false });
+        return jsonResponse_({ ok: true, admin: true, token: body.adminToken && tokenOk_(String(body.adminToken)) ? String(body.adminToken) : issueToken_() });
+      }
+
+      if (action === "adminLogout") {
+        if (body.adminToken) PropertiesService.getScriptProperties().deleteProperty("admintok:" + String(body.adminToken));
+        return jsonResponse_({ ok: true });
       }
 
       // 員工查看自己上個月的薪資：身分由伺服器用「姓名＋手機號碼」驗證，完全不採信前端傳來的員工 ID；

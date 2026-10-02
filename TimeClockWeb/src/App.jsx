@@ -435,9 +435,9 @@ export default function TimeClockApp() {
         const saved = await window.storage.get("session", false);
         const parsed = saved?.value ? JSON.parse(saved.value) : null;
         if (!active) return;
-        if (parsed?.type === "admin" && typeof parsed.pw === "string" && parsed.pw) {
-          // 管理員密碼要先交給資料層，之後的請求才有管理員權限（沒有密碼的舊紀錄需重新登入）
-          window.storage.setAdminPassword(parsed.pw);
+        if (parsed?.type === "admin" && typeof parsed.token === "string" && parsed.token) {
+          // 管理員憑證要先交給資料層，之後的請求才有管理員權限（沒有憑證的舊紀錄需重新登入）
+          window.storage.setAdminToken(parsed.token);
           setSessionId("admin");
           setSessionType("admin");
         } else if (parsed?.type === "employee" && typeof parsed.id === "string" && parsed.id) {
@@ -795,9 +795,11 @@ export default function TimeClockApp() {
     }
   };
 
-  const rememberSession = async (id, type, pw) => {
+  const rememberSession = async (id, type, secret) => {
     try {
-      await window.storage.set("session", JSON.stringify({ id, type, pw: pw || "" }), false);
+      // 管理員存後端發的憑證（不存密碼）；員工存登入用的手機號碼（查自己薪資時給後端驗證）
+      const rec = type === "admin" ? { id, type, token: secret || "" } : { id, type, pw: secret || "" };
+      await window.storage.set("session", JSON.stringify(rec), false);
       setSessionNotice("");
     } catch (e) {
       setSessionNotice("此裝置無法保存登入，關閉後可能需要重新登入。");
@@ -807,17 +809,17 @@ export default function TimeClockApp() {
   const handleLogin = async (name, phone) => {
     if (name === ADMIN_ACCOUNT.name) {
       // 管理員密碼由後端驗證（前端不含密碼）
-      let ok = false;
+      let token = "";
       try {
-        ok = await window.storage.adminLogin(phone);
+        token = await window.storage.adminLogin(phone);
       } catch (e) {
         flash(/not configured/i.test(e.message) ? "後端尚未設定管理員密碼（ADMIN_PASSWORD），請先到 Apps Script 設定" : "登入失敗，請稍後再試", "error");
         return "wrong";
       }
-      if (!ok) return "wrong";
+      if (!token) return "wrong";
       setSessionId("admin");
       setSessionType("admin");
-      await rememberSession("admin", "admin", phone);
+      await rememberSession("admin", "admin", token);
       flash(`管理員登入成功`);
       return "ok";
     }
@@ -875,7 +877,7 @@ export default function TimeClockApp() {
 
   const handleLogout = async () => {
     currentScope.current = ":";
-    window.storage.setAdminPassword("");
+    window.storage.adminLogout();
     setSessionPw("");
     setSessionId("");
     setSessionType("");

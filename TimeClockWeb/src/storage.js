@@ -6,8 +6,8 @@ const API_KEY = import.meta.env.VITE_SHEETS_API_KEY || "";
 
 const LOCAL_PREFIX = "tc_local_";
 
-// 管理員登入後的密碼只放在記憶體，之後每個請求都帶給後端驗證（後端才是真正的權限判斷）。
-let adminPassword = "";
+// 管理員登入後由後端發給的憑證；之後每個請求都帶給後端驗證（後端才是真正的權限判斷）。密碼本身不保存。
+let adminToken = "";
 const REQUEST_TIMEOUT_MS = 20000;
 
 function apiError(message, code, retryable = false) {
@@ -40,7 +40,7 @@ async function callApiOnce(action, extra = {}) {
         method: "POST",
         // 用 text/plain 避免瀏覽器對 Apps Script 發出 CORS 預檢請求（preflight）
         headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action, apiKey: API_KEY, ...(adminPassword ? { adminPassword } : {}), ...extra }),
+        body: JSON.stringify({ action, apiKey: API_KEY, ...(adminToken ? { adminToken } : {}), ...extra }),
         signal: controller.signal,
       });
       if (!res.ok) {
@@ -151,19 +151,20 @@ const storage = {
     return data.punches;
   },
 
-  setAdminPassword(pw) { adminPassword = pw || ""; },
+  setAdminToken(t) { adminToken = t || ""; },
 
-  // 管理員登入：由後端比對密碼。回傳 true / false；後端沒設定 ADMIN_PASSWORD 時丟出錯誤。
+  // 管理員登入：由後端比對密碼，成功回傳憑證字串，失敗回傳 ""；後端沒設定 ADMIN_PASSWORD 時丟出錯誤。
   async adminLogin(pw) {
-    adminPassword = pw;
-    try {
-      const data = await callApi("adminLogin", {});
-      if (!data.admin) adminPassword = "";
-      return !!data.admin;
-    } catch (e) {
-      adminPassword = "";
-      throw e;
-    }
+    adminToken = "";
+    const data = await callApi("adminLogin", { adminPassword: pw });
+    adminToken = data.admin && typeof data.token === "string" ? data.token : "";
+    return adminToken;
+  },
+
+  async adminLogout() {
+    const t = adminToken;
+    adminToken = "";
+    if (t) { try { await callApiOnce("adminLogout", { adminToken: t }); } catch (e) { /* 忽略 */ } }
   },
 
   // 員工查看自己上個月薪資：以姓名＋手機號碼由後端驗證身分（不傳員工 ID）。
