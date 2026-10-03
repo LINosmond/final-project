@@ -1804,7 +1804,7 @@ function buildDeclarationSnapshot(list, salary, punches, year, month, multiplier
       const maxWork = Math.max(0, daysInMonth - 7);
       let guard = 0;
       while (kept.length > maxWork && guard++ < 400) kept.splice(declPickRemoveIndex(kept), 1);
-      const rec = { ...eff, dutyAllowance: 5000, specialBonus: 0 }; // 申報用：職務加級 5000、特別獎金 0
+      const rec = { ...eff, dutyAllowance: 5000, specialBonus: 0, carWash: 600 + Math.floor(Math.random() * 401) }; // 申報用：職務加級 5000、特別獎金 0、洗車獎金隨機 600~1000
       emps[e.id] = { name: e.name, chief: true, days: kept, rec };
       return;
     }
