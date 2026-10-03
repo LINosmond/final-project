@@ -1,0 +1,9 @@
+# 絕對不要上傳：帳號密碼、登入狀態、抓下來的資料
+.env
+data/
+node_modules/
+
+# 擷取模式產生的除錯檔（含你帳號查到的內容，請勿上傳）
+capture*.html
+capture*.png
+capture*.json

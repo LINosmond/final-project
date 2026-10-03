@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>RO 物價追蹤</title>
+  <link rel="stylesheet" href="styles.css" />
+  <!-- 讓手機可以「加到主畫面」變成 App -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#0f1220" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RO物價" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon-180.png" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>🪙 RO 物價追蹤</h1>
+    <div class="status" id="status">載入中…</div>
+  </header>
+
+  <main>
+    <section class="panel add">
+      <form id="add-form">
+        <input id="add-input" type="text" placeholder="輸入要追蹤的商品名稱，例如：藍色寶石" autocomplete="off" />
+        <button type="submit">＋ 釘選追蹤</button>
+      </form>
+      <div class="controls">
+        <button id="refresh-all" class="ghost">全部立即更新</button>
+        <label class="interval">
+          每
+          <input id="interval" type="number" min="1" step="1" />
+          分鐘自動更新
+          <button id="save-interval" class="ghost small">儲存</button>
+        </label>
+      </div>
+      <div id="login-box" class="loginbox hidden">
+        <span id="login-msg"></span>
+        <span class="login-actions">
+          <button id="login-open">登入 gnjoy</button>
+          <button id="login-done" class="hidden">我登入好了 ✓</button>
+          <button id="login-cancel" class="ghost small hidden">取消</button>
+        </span>
+      </div>
+    </section>
+
+    <section id="items" class="items"></section>
+    <p id="empty" class="empty hidden">還沒有追蹤任何商品。上面輸入商品名稱開始釘選吧！</p>
+  </main>
+
+  <template id="item-tpl">
+    <article class="item">
+      <div class="item-head">
+        <div class="item-name"></div>
+        <div class="item-actions">
+          <button class="refresh ghost small">更新</button>
+          <button class="remove ghost small danger">移除</button>
+        </div>
+      </div>
+      <div class="item-meta"></div>
+      <div class="item-body"></div>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
