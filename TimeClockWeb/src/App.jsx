@@ -1751,7 +1751,7 @@ function showReportOverlay(html) {
   document.body.appendChild(wrap);
 }
 
-// ===== 申報薪資表：以「當月真實打卡」為基礎，刪掉部分已打卡的天數，使實發薪資落在 29500~33000，
+// ===== 申報薪資表：以「當月真實打卡」為基礎，刪掉部分已打卡的天數，使實發薪資落在 30500~34000，
 // 產生一份「固定」的申報快照（存到後台，之後不再變動，除非按「再次調整」）。完全不動真實打卡/薪資資料。=====
 
 // 在一組（依日期遞增排序）的保留天數中，挑一個要刪除的索引：優先刪「最長連續上班區段」的中間那天，
@@ -1772,7 +1772,7 @@ function buildDeclarationSnapshot(list, salary, punches, year, month, multiplier
   const WD = ["日", "一", "二", "三", "四", "五", "六"];
   const daysInMonth = new Date(year, month, 0).getDate();
   const dow = (d) => WD[new Date(year, month - 1, d).getDay()];
-  const HI = 33000;
+  const HI = 34000;
 
   // 取某員工當月「真實有打卡」的每一天（含上下班時間與工時分鐘）
   const realDaysOf = (e) => {
@@ -1813,7 +1813,7 @@ function buildDeclarationSnapshot(list, salary, punches, year, month, multiplier
     // 申報用洗車獎金：隨機 600~1000（只寫進這份固定的快照，不動真實薪資）；勞健保沿用該月原本的值
     const carWash = 600 + Math.floor(Math.random() * 401);
     const fixed = carWash + salNum(eff.dutyAllowance) + salNum(eff.specialBonus) - salNum(eff.laborIns) - salNum(eff.healthIns);
-    const maxMins = ((HI - fixed) / H) * 60; // 實發不超過 33000 對應的工時上限（分鐘）
+    const maxMins = ((HI - fixed) / H) * 60; // 實發不超過 34000 對應的工時上限（分鐘）
     const kept = real.slice();
     const totalMins = () => kept.reduce((s, d) => s + d.mins, 0);
     let guard = 0;
@@ -2658,7 +2658,7 @@ function LocationPanel({ companyLocation, onSave, onClear, busy }) {
   );
 }
 
-// 申報薪資表：以當月真實打卡為基礎、刪掉部分打卡天數使實發落在 29500~33000。
+// 申報薪資表：以當月真實打卡為基礎、刪掉部分打卡天數使實發落在 30500~34000。
 // 第一次按會「產生並固定」（存到後台），之後按只會顯示同一份；要重算請按「再次調整」。
 // 完全不更動真實打卡/薪資資料（申報快照存在獨立的 declaration 資料）。
 function DeclarationPanel({ employees, salary, punches, multiplier, overrides, declaration, onSaveDeclaration }) {
@@ -2689,7 +2689,7 @@ function DeclarationPanel({ employees, salary, punches, multiplier, overrides, d
     <div style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, marginBottom: 14 }}>
       <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 8 }}>申報薪資表</div>
       <div style={{ fontSize: 11, color: COLORS.textFaint, lineHeight: 1.6, marginBottom: 10 }}>
-        以<b>當月真實打卡</b>為基礎，<b>刪掉部分已打卡的天數</b>使<b>實發薪資落在 29500~33000</b>（刪天時優先打散最長連續、盡量避免連上 7 天）；
+        以<b>當月真實打卡</b>為基礎，<b>刪掉部分已打卡的天數</b>使<b>實發薪資落在 30500~34000</b>（刪天時優先打散最長連續、盡量避免連上 7 天）；
         月薪職務<b>月休至少 7 天</b>、申報用職務加級 <b>5000</b>、無特別獎金。第一次按會<b>產生並固定</b>（存到後台），之後再按只會顯示<b>同一份</b>；
         要重新調整請按「<b>再次調整</b>」。<b>不會更動任何真實打卡與薪資資料</b>（申報資料獨立儲存）。
       </div>
