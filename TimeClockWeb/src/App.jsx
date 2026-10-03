@@ -1767,6 +1767,69 @@ function declPickRemoveIndex(days) {
   return bestStart + Math.floor(bestLen / 2);
 }
 
+// 月薪職務的申報排班：回傳上班日（1-based，遞增）。固定休 restDays 天，任何連續上班不超過 maxRun 天。
+// 休假日平均分散，並盡量排在沒有真實打卡的日子；結果固定（不隨機）。
+function buildMonthlySchedule(real, daysInMonth, restDays, maxRun) {
+  const realSet = new Set(real.map((r) => r.day));
+  const rest = new Set();
+  const R = Math.min(restDays, daysInMonth);
+  for (let i = 0; i < R; i++) {
+    const target = Math.round(((i + 0.5) * daysInMonth) / R); // 理想休假位置（1-based）
+    let best = null;
+    for (let off = 0; off < daysInMonth && best == null; off++) {
+      for (const d of [target - off, target + off]) {
+        if (d >= 1 && d <= daysInMonth && !rest.has(d) && !realSet.has(d)) { best = d; break; }
+      }
+      if (off > 2) break; // 附近找不到沒打卡的日子，就不強求
+    }
+    if (best == null) {
+      for (let off = 0; off < daysInMonth && best == null; off++) {
+        for (const d of [target - off, target + off]) {
+          if (d >= 1 && d <= daysInMonth && !rest.has(d)) { best = d; break; }
+        }
+      }
+    }
+    rest.add(best);
+  }
+  // 保險：若仍有連續上班超過 maxRun，把該段最後一天和附近休假日對調，休假天數不變
+  for (let pass = 0; pass < daysInMonth; pass++) {
+    let run = 0, bad = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      run = rest.has(d) ? 0 : run + 1;
+      if (run > maxRun) { bad = d; break; }
+    }
+    if (!bad) break;
+    // 找一個移走後不會造成新超長段的休假日（離 bad 最遠的那個開始試）
+    const cand = [...rest].sort((a, b) => Math.abs(b - bad) - Math.abs(a - bad));
+    let moved = false;
+    for (const c of cand) {
+      rest.delete(c); rest.add(bad);
+      let ok = true, r2 = 0;
+      for (let d = 1; d <= daysInMonth; d++) { r2 = rest.has(d) ? 0 : r2 + 1; if (r2 > maxRun) { ok = false; break; } }
+      if (ok) { moved = true; break; }
+      rest.delete(bad); rest.add(c);
+    }
+    if (!moved) { rest.add(bad); break; } // 極端情況：多休一天也不超過連續上限
+  }
+  const days = [];
+  for (let d = 1; d <= daysInMonth; d++) if (!rest.has(d)) days.push(d);
+  return days;
+}
+
+// 某人最常見的上下班時間（用於沒有真實打卡的排班日）
+function typicalTimes(real) {
+  const mode = (arr, fb) => {
+    const c = {}; let best = fb, n = 0;
+    arr.filter(Boolean).forEach((v) => { c[v] = (c[v] || 0) + 1; if (c[v] > n) { n = c[v]; best = v; } });
+    return best;
+  };
+  const tIn = mode(real.map((r) => r.in), "08:00");
+  const tOut = mode(real.map((r) => r.out), "18:00");
+  const toMin = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+  const mins = Math.max(0, toMin(tOut) - toMin(tIn));
+  return { in: tIn, out: tOut, mins: mins || 600 };
+}
+
 // 產生某個月的申報快照：{ generatedAt, year, month, emps: { "<id>": { name, chief, days:[{day,wd,in,out,mins}], rec } } }
 function buildDeclarationSnapshot(list, salary, punches, year, month, multiplier, overrides) {
   const WD = ["日", "一", "二", "三", "四", "五", "六"];
@@ -1799,11 +1862,14 @@ function buildDeclarationSnapshot(list, salary, punches, year, month, multiplier
     const chief = eff.position === "月薪";
     const real = realDaysOf(e);
     if (chief) {
-      // 月薪職務：月薪制。打卡紀錄沿用真實打卡，若上班超過「當月天數−7」天，刪到月休至少 7 天。
-      const kept = real.slice();
-      const maxWork = Math.max(0, daysInMonth - 7);
-      let guard = 0;
-      while (kept.length > maxWork && guard++ < 400) kept.splice(declPickRemoveIndex(kept), 1);
+      // 月薪職務：整月排班，固定月休 8 天，連續上班不超過 6 天。
+      // 有真實打卡的日子用真實上下班時間；其餘上班日用此人最常見的上下班時間（沒有紀錄則 08:00–18:00）。
+      const kept = buildMonthlySchedule(real, daysInMonth, 8, 6).map((day) => {
+        const r = real.find((x) => x.day === day);
+        if (r) return r;
+        const t = typicalTimes(real);
+        return { day, wd: dow(day), in: t.in, out: t.out, mins: t.mins };
+      });
       const rec = { ...eff, dutyAllowance: 5000, specialBonus: 0, carWash: 600 + Math.floor(Math.random() * 401) }; // 申報用：職務加級 5000、特別獎金 0、洗車獎金隨機 600~1000
       emps[e.id] = { name: e.name, chief: true, days: kept, rec };
       return;
@@ -2695,7 +2761,7 @@ function DeclarationPanel({ employees, salary, punches, multiplier, overrides, d
       </div>
       <div style={{ fontSize: 11, color: COLORS.textFaint, lineHeight: 1.6, marginBottom: 10 }}>
         以<b>當月真實打卡</b>為基礎，<b>刪掉部分已打卡的天數</b>使<b>實發薪資落在 30500~34000</b>（刪天時優先打散最長連續、盡量避免連上 7 天）；
-        月薪職務<b>月休至少 7 天</b>、申報用職務加級 <b>5000</b>、無特別獎金。第一次按會<b>產生並固定</b>（存到後台），之後再按只會顯示<b>同一份</b>；
+        月薪職務<b>固定月休 8 天、連續上班不超過 6 天</b>、申報用職務加級 <b>5000</b>、無特別獎金。第一次按會<b>產生並固定</b>（存到後台），之後再按只會顯示<b>同一份</b>；
         要重新調整請按「<b>再次調整</b>」。<b>不會更動任何真實打卡與薪資資料</b>（申報資料獨立儲存）。
       </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
@@ -3155,4 +3221,4 @@ function tdStyle(isDay) {
 }
 
 // 共用計算與流程測試入口。
-export { SalaryPanel, salaryEffectiveRecord, salaryHoursOf, salaryCalc, computeMonthRows };
+export { SalaryPanel, salaryEffectiveRecord, salaryHoursOf, salaryCalc, computeMonthRows, buildMonthlySchedule, buildDeclarationSnapshot };

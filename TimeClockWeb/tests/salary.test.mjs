@@ -124,3 +124,27 @@ test('薪資寫入成功前不報成功，失敗不覆蓋原資料，可重試',
   assert.match(JSON.stringify(view.toJSON()), /已儲存薪資/);
   await act(async () => view.unmount());
 });
+
+test('申報：月薪人員固定月休 8 天、連續上班不超過 6 天，有洗車獎金且職務加級 5000', async () => {
+  const { buildMonthlySchedule, buildDeclarationSnapshot } = await import(pathToFileURL(generated));
+  for (const dim of [28, 29, 30, 31]) {
+    for (const realDays of [[], [21, 23, 24, 25, 26, 27, 29, 30, 31].filter(d => d <= dim), Array.from({ length: dim }, (_, i) => i + 1)]) {
+      const days = buildMonthlySchedule(realDays.map(day => ({ day })), dim, 8, 6);
+      assert.equal(dim - days.length, 8, `${dim} 天月份應休 8 天`);
+      let run = 0;
+      for (let d = 1; d <= dim; d++) { run = days.includes(d) ? run + 1 : 0; assert.ok(run <= 6, `${dim} 天月份第 ${d} 天連上 ${run} 天`); }
+    }
+  }
+  const chief = { id: 'c1', name: 'Chief', status: 'active' };
+  const rows = [21, 23, 24].flatMap(d => [
+    { id: `${d}i`, employeeId: 'c1', type: 'in', ts: new Date(2026, 6, d, 8).getTime() },
+    { id: `${d}o`, employeeId: 'c1', type: 'out', ts: new Date(2026, 6, d, 18).getTime() },
+  ]);
+  const snap = buildDeclarationSnapshot([chief], { c1: { defaults: { position: '月薪', hourlyRate: 30000 } } }, rows, 2026, 7, 2, {});
+  const r = snap.emps.c1;
+  assert.equal(r.chief, true);
+  assert.equal(r.days.length, 31 - 8);
+  assert.ok(r.rec.carWash >= 600 && r.rec.carWash <= 1000);
+  assert.equal(r.rec.dutyAllowance, 5000);
+  assert.equal(r.days.find(d => d.day === 21).in, '08:00'); // 有真實打卡的日子用真實時間
+});
