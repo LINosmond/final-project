@@ -88,7 +88,9 @@ test('儲存不固定工時、連點只送一次；列印／CSV使用最新考�
   assert.equal(calls, 1); assert.equal(saved[2].workHours, null); assert.equal(saved[2].otHours, null);
   assert.equal(view.root.findByType('fieldset').props.disabled, true);
   await act(async () => { resolveSave(); await pending; });
-  global.window = { open: () => ({ document: { open() {}, write(v) { html = v; }, close() {} } }) };
+  // 報表改在頁內全螢幕覆蓋層（iframe srcdoc）顯示，避免手機 Safari 開新分頁後無法返回
+  const el = () => ({ style: {}, append() {}, remove() {}, set srcdoc(v) { html = v; } });
+  global.document = { createElement: el, body: { style: {}, appendChild() {} } };
   act(() => button(view, '列印總表').props.onClick());
   assert.match(html, /<th>工作時數<\/th><td>8<\/td>/);
   assert.match(html, /<th>加班時數<\/th><td>2<\/td>/);
@@ -102,8 +104,9 @@ test('儲存不固定工時、連點只送一次；列印／CSV使用最新考�
 test('薪資寫入成功前不報成功，失敗不覆蓋原資料，可重試', async () => {
   let resolveWrite, rejectWrite, view;
   global.window = { storage: {
-    getAll: async () => ({ employees: JSON.stringify([emp]), punches: '[]', holidays: '{}', companyLocation: null, otMultiplier: '2', salary: JSON.stringify(salary), declaration: '{}' }),
-    get: async () => ({ value: JSON.stringify({ type: 'admin' }) }),
+    getAll: async () => ({ employees: JSON.stringify([emp]), punches: '[]', holidays: '{}', companyLocation: null, otMultiplier: '2', salary: JSON.stringify(salary), declaration: '{}', salaryVisible: null }),
+    get: async () => ({ value: JSON.stringify({ id: 'admin', type: 'admin', token: 'fixture-token' }) }),
+    setAdminToken() {}, adminLogout: async () => {},
     set: () => new Promise((res, rej) => { resolveWrite = res; rejectWrite = rej; }),
   } };
   await act(async () => { view = create(React.createElement(App)); });

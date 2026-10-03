@@ -72,6 +72,8 @@ async function mountApp(t, { session = savedEmployee, data = fixtureData(), resp
       assert.equal(phone, employee.phone);
       return { employee, created: false, employees: JSON.parse(state.data.employees) };
     },
+    setAdminToken(token) { state.adminToken = token; },
+    async adminLogout() { state.adminToken = ''; },
     async reviewEmployee(id, decision) {
       state.reviews.push({ id, decision });
       if (state.reviewError) throw state.reviewError;
@@ -260,7 +262,7 @@ test('尚未登入只載入員工名單；員工同步不下載薪資及申報',
 });
 
 test('管理員同步仍載入薪資及申報資料', async t => {
-  const app = await mountApp(t, { session: { id: 'admin', type: 'admin' } });
+  const app = await mountApp(t, { session: { id: 'admin', type: 'admin', token: 'fixture-token' } });
   assert.equal(app.has('AdminView'), true);
   const allKeys = new Set(app.state.calls.flatMap(call => call.keys));
   assert.ok(allKeys.has('salary'));
@@ -278,7 +280,7 @@ test('暫時同步失敗保留已確認帳號與打卡畫面', async t => {
 
 test('審核逾時且結果不明時不整包覆寫員工，也不顯示成功', async t => {
   const pending = { id: 'fixture-pending', name: 'Pending Fixture', phone: '00000001', status: 'pending' };
-  const app = await mountApp(t, { session: { id: 'admin', type: 'admin' }, data: fixtureData([employee, pending]) });
+  const app = await mountApp(t, { session: { id: 'admin', type: 'admin', token: 'fixture-token' }, data: fixtureData([employee, pending]) });
   app.state.reviewError = Object.assign(new Error('Fixture review timeout'), { code: 'TIMEOUT', resultUnknown: true });
   const staff = app.view.root.findAllByType('button').find(node => String(node.props.children).includes('員工管理'));
   assert.ok(staff);
@@ -308,7 +310,7 @@ test('本機登入保存失敗仍可登入，保存失敗提示不被歡迎訊�
 });
 
 test('管理員慢讀期間切換員工，舊請求完成後立即讀新身分資料，不等待下一輪 timer', async t => {
-  const app = await mountApp(t, { session: { id: 'admin', type: 'admin' } });
+  const app = await mountApp(t, { session: { id: 'admin', type: 'admin', token: 'fixture-token' } });
   const gate = deferred();
   app.state.responses.push(gate.promise);
   const before = app.state.calls.length;

@@ -9,7 +9,8 @@ function backend() {
   const ctx = vm.createContext({
     PropertiesService: { getScriptProperties: () => ({ getProperty: () => 'fixture-key' }) },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() { releases++; } }) },
-    Utilities: { getUuid: () => 'fixture-id' },
+    Utilities: { getUuid: () => 'fixture-id', formatDate: () => '2026-10' },
+    CacheService: { getScriptCache: () => ({ get: () => null, put() {} }) },
   });
   vm.runInContext(source, ctx);
   ctx.getSheet_ = () => ({});
@@ -22,6 +23,9 @@ function backend() {
   ctx.jsonResponse_ = obj => JSON.parse(JSON.stringify(obj));
   return { call: body => ctx.doPost({ postData: { contents: JSON.stringify({ apiKey: 'fixture-key', ...body }) } }), kv, releases: () => releases };
 }
+
+// fixture 的 Script Properties 對任何鍵都回 'fixture-key'，因此 ADMIN_PASSWORD 也是它
+const ADMIN = { adminPassword: 'fixture-key' };
 
 test('後端：重試同筆打卡不重複，其他員工同時打卡保留', () => {
   const b = backend();
@@ -36,10 +40,12 @@ test('後端：重試同筆打卡不重複，其他員工同時打卡保留', ()
 test('後端：薪資 null 工時與固定設定完整往返；備份格式不變', () => {
   const b = backend();
   const value = JSON.stringify({ e1: { defaults: { hourlyRate: 200 }, '2026-09': { workHours: null, otHours: null, specialBonus: 500 } } });
-  assert.equal(b.call({ action: 'set', key: 'salary', value }).ok, true);
-  assert.equal(b.call({ action: 'get', key: 'salary' }).value, value);
+  assert.equal(b.call({ action: 'set', key: 'salary', value }).ok, false); // 非管理員不能寫
+  assert.equal(b.call({ action: 'set', key: 'salary', value, ...ADMIN }).ok, true);
+  assert.equal(b.call({ action: 'get', key: 'salary' }).value, null); // 非管理員讀不到
+  assert.equal(b.call({ action: 'get', key: 'salary', ...ADMIN }).value, value);
   const records = [{ id: 'p1', employeeId: 'e1', type: 'in', ts: 1000 }];
-  b.call({ action: 'set', key: 'punches', value: JSON.stringify(records) });
+  b.call({ action: 'set', key: 'punches', value: JSON.stringify(records), ...ADMIN });
   assert.deepEqual(JSON.parse(b.call({ action: 'get', key: 'punches' }).value), records);
 });
 
@@ -47,8 +53,9 @@ test('後端：新帳號待審核，審核通過；錯誤 API key 不寫入', ()
   const b = backend();
   const result = b.call({ action: 'findOrCreateEmployee', name: 'Fixture', phone: '00000000' });
   assert.equal(result.employee.status, 'pending');
-  const approved = b.call({ action: 'reviewEmployee', id: result.employee.id, decision: 'approve' });
+  assert.equal(b.call({ action: 'reviewEmployee', id: result.employee.id, decision: 'approve' }).ok, false); // 非管理員不能審核
+  const approved = b.call({ action: 'reviewEmployee', id: result.employee.id, decision: 'approve', ...ADMIN });
   assert.equal(approved.employees[0].status, 'active');
-  const denied = b.call({ action: 'set', key: 'salary', value: '{}', apiKey: 'wrong' });
+  const denied = b.call({ action: 'set', key: 'salary', value: '{}', apiKey: 'wrong', ...ADMIN });
   assert.equal(denied.ok, false); assert.equal(b.kv.has('salary'), false);
 });
