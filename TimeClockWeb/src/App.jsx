@@ -2687,7 +2687,12 @@ function DeclarationPanel({ employees, salary, punches, multiplier, overrides, d
 
   return (
     <div style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, marginBottom: 14 }}>
-      <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 8 }}>申報薪資表</div>
+      <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 8 }}>
+        申報薪資表
+        <span style={{ fontSize: 10, color: COLORS.textFaint, marginLeft: 8 }}>
+          網站版本 {typeof __BUILD_TIME__ !== "undefined" ? __BUILD_TIME__ : "開發版"}
+        </span>
+      </div>
       <div style={{ fontSize: 11, color: COLORS.textFaint, lineHeight: 1.6, marginBottom: 10 }}>
         以<b>當月真實打卡</b>為基礎，<b>刪掉部分已打卡的天數</b>使<b>實發薪資落在 30500~34000</b>（刪天時優先打散最長連續、盡量避免連上 7 天）；
         月薪職務<b>月休至少 7 天</b>、申報用職務加級 <b>5000</b>、無特別獎金。第一次按會<b>產生並固定</b>（存到後台），之後再按只會顯示<b>同一份</b>；
