@@ -813,8 +813,11 @@ export default function TimeClockApp() {
       try {
         token = await window.storage.adminLogin(phone);
       } catch (e) {
-        flash(/not configured/i.test(e.message) ? "後端尚未設定管理員密碼（ADMIN_PASSWORD），請先到 Apps Script 設定" : "登入失敗，請稍後再試", "error");
-        return "wrong";
+        // 回傳 "error"（不是 "wrong"），避免真正原因被「姓名或手機號碼不正確」蓋掉
+        flash(/not configured/i.test(e.message) ? "後端尚未設定管理員密碼（ADMIN_PASSWORD），請先到 Apps Script 設定"
+          : e.code === "UNSUPPORTED_ACTION" ? "後端程式尚未更新，請到 Apps Script 重新部署最新版 Code.gs"
+          : "登入失敗，請稍後再試", "error");
+        return "error";
       }
       if (!token) return "wrong";
       setSessionId("admin");
@@ -830,7 +833,7 @@ export default function TimeClockApp() {
       result = await window.storage.findOrCreateEmployee(name, phone);
     } catch (e) {
       flash("登入失敗，請稍後再試", "error");
-      return "wrong";
+      return "error";
     }
     setEmployees(result.employees);
     const emp = result.employee;
