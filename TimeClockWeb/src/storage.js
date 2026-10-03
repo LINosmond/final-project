@@ -9,6 +9,8 @@ const LOCAL_PREFIX = "tc_local_";
 // 管理員登入後由後端發給的憑證；之後每個請求都帶給後端驗證（後端才是真正的權限判斷）。密碼本身不保存。
 let adminToken = "";
 const REQUEST_TIMEOUT_MS = 20000;
+// 整批讀取包含完整打卡歷史，Apps Script 實際回應可能超過 20 秒。
+const BULK_READ_TIMEOUT_MS = 60000;
 
 function apiError(message, code, retryable = false) {
   const error = new Error(message);
@@ -32,7 +34,7 @@ async function callApiOnce(action, extra = {}) {
     timer = setTimeout(() => {
       reject(apiError("連線逾時，請確認網路後再試。", "TIMEOUT", true));
       controller.abort();
-    }, REQUEST_TIMEOUT_MS);
+    }, action === "getAll" ? BULK_READ_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
   });
   try {
     const request = (async () => {

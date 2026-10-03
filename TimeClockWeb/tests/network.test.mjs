@@ -29,7 +29,7 @@ function client(fetchImpl, { deadlineMs = 1000, url = 'https://fixture.invalid/a
       const timer = setTimeout(() => {
         timers.delete(timer);
         callback();
-      }, milliseconds === 20000 ? deadlineMs : 0);
+      }, milliseconds === 20000 || milliseconds === 60000 ? deadlineMs * milliseconds / 20000 : 0);
       timers.add(timer);
       return timer;
     },
@@ -102,7 +102,7 @@ test('transient network, HTTP and lock failures may retry a read once', async ()
     const c = client((_, attempt) => attempt === 1 ? firstAttempt() : response({ ok: true, values: { employees: '[]' } }));
     assert.deepEqual(await c.storage.getAll(['employees']), { employees: '[]' });
     assert.equal(c.requests.length, 2);
-    assert.deepEqual(c.delays, [20000, 600, 20000]);
+    assert.deepEqual(c.delays, [60000, 600, 60000]);
     assert.equal(c.timers.size, 0);
   }
 });
@@ -111,6 +111,17 @@ test('persistent transient failure stops after two requests', async () => {
   const c = client(() => response({}, 503));
   await assert.rejects(c.storage.getAll(['employees']), { code: 'HTTP_ERROR' });
   assert.equal(c.requests.length, 2);
+  assert.equal(c.timers.size, 0);
+});
+
+test('slow batch data can finish beyond the normal request deadline', async () => {
+  const c = client(async () => {
+    await new Promise(resolve => setTimeout(resolve, 30));
+    return response({ ok: true, values: { employees: '[]', punches: '[]' } });
+  }, { deadlineMs: 20 });
+  assert.deepEqual(await c.storage.getAll(['employees', 'punches']), { employees: '[]', punches: '[]' });
+  assert.equal(c.requests.length, 1);
+  assert.equal(c.requests[0].signal.aborted, false);
   assert.equal(c.timers.size, 0);
 });
 
