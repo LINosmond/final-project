@@ -167,6 +167,8 @@ test('transient network, HTTP and lock failures may retry a read once', async ()
     () => response({}, 429),
     () => response({}, 503),
     () => response({ ok: false, error: 'Exception: Lock timeout: another process was holding the lock for too long.' }),
+    () => response({ ok: false, error: 'Exception: 鎖定逾時：其他處理程序佔用鎖定的時間過長。' }),
+    () => response({ ok: false, error: 'Exception: 锁定超时：其他进程占用锁定的时间过长。' }),
   ]) {
     const c = client((_, attempt) => attempt === 1 ? firstAttempt() : response({ ok: true, values: { employees: '[]' } }));
     assert.deepEqual(await c.storage.getAll(['employees']), { employees: '[]' });

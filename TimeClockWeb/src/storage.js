@@ -100,7 +100,7 @@ async function callApiOnce(action, extra = {}) {
       if (!data.ok) {
         const message = typeof data.error === "string" ? data.error : "API 回傳失敗";
         const unsupported = /^unknown action(?:\s*:|$)/i.test(message.trim());
-        const lockTimeout = /lock timeout|timeout exceeded waiting for (?:the )?lock/i.test(message);
+        const lockTimeout = /lock timeout|timeout exceeded waiting for (?:the )?lock|鎖定逾時|鎖定超時|锁定超时/i.test(message);
         throw apiError(message, unsupported ? "UNSUPPORTED_ACTION" : "API_ERROR", lockTimeout);
       }
       return data;
