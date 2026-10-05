@@ -220,14 +220,14 @@ function prevMonthKey_() {
   return y + "-" + (m < 10 ? "0" + m : m);
 }
 
-function doPost(e) {
+function processRequest_(e) {
   try {
     var body = JSON.parse(e.postData.contents);
     var action = body.action;
 
     var requiredKey = getApiKey();
     if (requiredKey && body.apiKey !== requiredKey) {
-      return jsonResponse_({ ok: false, error: "unauthorized" });
+      return ({ ok: false, error: "unauthorized" });
     }
 
     var lock = LockService.getScriptLock();
@@ -262,7 +262,7 @@ function doPost(e) {
             values[wk] = map.hasOwnProperty(wk) ? map[wk] : null;
           }
         }
-        return jsonResponse_({ ok: true, values: values });
+        return ({ ok: true, values: values });
       }
 
       if (action === "appendPunch") {
@@ -280,14 +280,14 @@ function doPost(e) {
           psh.getRange(newRow, 1, 1, PUNCH_COLS).setNumberFormat("@").setValues([punchToRow_(entry)]);
           punches.push(entry);
         }
-        return jsonResponse_({ ok: true, punches: punches });
+        return ({ ok: true, punches: punches });
       }
 
       if (action === "findOrCreateEmployee") {
         var name = body.name;
         var phone = body.phone;
         if (!name || !phone) {
-          return jsonResponse_({ ok: false, error: "missing name or phone" });
+          return ({ ok: false, error: "missing name or phone" });
         }
         var employees = JSON.parse(readValue_(sheet, "employees") || "[]");
         var existing = null;
@@ -296,28 +296,28 @@ function doPost(e) {
         }
         if (existing) {
           // 手機號碼（密碼）不對時，不回傳該員工的手機號碼，也避免被拿來猜密碼
-          if (throttleBlocked_("login:" + name)) return jsonResponse_({ ok: false, error: "too many attempts" });
+          if (throttleBlocked_("login:" + name)) return ({ ok: false, error: "too many attempts" });
           if (String(existing.phone) !== String(phone)) {
             throttleFail_("login:" + name);
             var masked = {}; for (var mk in existing) { if (mk !== "phone") masked[mk] = existing[mk]; }
-            return jsonResponse_({ ok: true, created: false, employee: masked, employees: stripPhones_(employees) });
+            return ({ ok: true, created: false, employee: masked, employees: stripPhones_(employees) });
           }
-          return jsonResponse_({ ok: true, created: false, employee: existing, employees: stripPhones_(employees) });
+          return ({ ok: true, created: false, employee: existing, employees: stripPhones_(employees) });
         }
         // 新申請的帳號預設為「待審核（pending）」，需管理員通過後才會變成 active、才能打卡並進入名冊
         var emp = { id: Utilities.getUuid(), name: name, phone: phone, status: "pending" };
         employees.push(emp);
         writeValue_(sheet, "employees", JSON.stringify(employees));
-        return jsonResponse_({ ok: true, created: true, employee: emp, employees: stripPhones_(employees) });
+        return ({ ok: true, created: true, employee: emp, employees: stripPhones_(employees) });
       }
 
       // 管理員審核：approve = 通過（狀態改 active）；reject = 拒絕（從名冊移除）。
       if (action === "reviewEmployee") {
-        if (!isAdmin) return jsonResponse_({ ok: false, error: "forbidden" });
+        if (!isAdmin) return ({ ok: false, error: "forbidden" });
         var reviewId = body.id;
         var decision = body.decision;
         if (!reviewId || (decision !== "approve" && decision !== "reject")) {
-          return jsonResponse_({ ok: false, error: "missing id or invalid decision" });
+          return ({ ok: false, error: "missing id or invalid decision" });
         }
         var emps = JSON.parse(readValue_(sheet, "employees") || "[]");
         var kept = [];
@@ -333,27 +333,27 @@ function doPost(e) {
           }
         }
         writeValue_(sheet, "employees", JSON.stringify(kept));
-        return jsonResponse_({ ok: true, employees: kept });
+        return ({ ok: true, employees: kept });
       }
 
       // 管理員登入驗證：密碼只在伺服器比對
       if (action === "adminLogin") {
-        if (!getAdminPassword_()) return jsonResponse_({ ok: false, error: "admin password not configured" });
-        if (!isAdmin) return jsonResponse_({ ok: true, admin: false });
-        return jsonResponse_({ ok: true, admin: true, token: body.adminToken && tokenOk_(String(body.adminToken)) ? String(body.adminToken) : issueToken_() });
+        if (!getAdminPassword_()) return ({ ok: false, error: "admin password not configured" });
+        if (!isAdmin) return ({ ok: true, admin: false });
+        return ({ ok: true, admin: true, token: body.adminToken && tokenOk_(String(body.adminToken)) ? String(body.adminToken) : issueToken_() });
       }
 
       if (action === "adminLogout") {
         if (body.adminToken) PropertiesService.getScriptProperties().deleteProperty("admintok:" + String(body.adminToken));
-        return jsonResponse_({ ok: true });
+        return ({ ok: true });
       }
 
       // 員工查看自己上個月的薪資：身分由伺服器用「姓名＋手機號碼」驗證，完全不採信前端傳來的員工 ID；
       // 管理員關閉開關時，這裡也會擋（不是只有前端把分頁藏起來）。
       if (action === "getMySalary") {
         var gName = String(body.name || ""), gPhone = String(body.phone || "");
-        if (!gName || !gPhone) return jsonResponse_({ ok: false, error: "unauthorized" });
-        if (throttleBlocked_("login:" + gName)) return jsonResponse_({ ok: false, error: "too many attempts" });
+        if (!gName || !gPhone) return ({ ok: false, error: "unauthorized" });
+        if (throttleBlocked_("login:" + gName)) return ({ ok: false, error: "too many attempts" });
         var gEmps = JSON.parse(readValue_(sheet, "employees") || "[]");
         var me = null;
         for (var gi = 0; gi < gEmps.length; gi++) {
@@ -361,34 +361,34 @@ function doPost(e) {
         }
         if (!me || me.status === "pending") {
           throttleFail_("login:" + gName);
-          return jsonResponse_({ ok: false, error: "unauthorized" });
+          return ({ ok: false, error: "unauthorized" });
         }
-        if (readValue_(sheet, "salaryVisible") !== "true") return jsonResponse_({ ok: false, error: "disabled" });
+        if (readValue_(sheet, "salaryVisible") !== "true") return ({ ok: false, error: "disabled" });
         var pub = JSON.parse(readValue_(sheet, "salaryPublished") || "{}");
         var ymKey = prevMonthKey_();
         var mine = pub[ymKey] && pub[ymKey][me.id] ? pub[ymKey][me.id] : null;
-        return jsonResponse_({ ok: true, ym: ymKey, record: mine });
+        return ({ ok: true, ym: ymKey, record: mine });
       }
 
       // 一般 key-value 動作（get / set / delete）。punches 特別導向獨立分頁。
       var key = body.key;
       if (!key) {
-        return jsonResponse_({ ok: false, error: "missing key" });
+        return ({ ok: false, error: "missing key" });
       }
 
       if (action === "get") {
         if (key === "punches") {
           migratePunchesIfNeeded_(sheet);
-          return jsonResponse_({ ok: true, value: JSON.stringify(readPunches_()) });
+          return ({ ok: true, value: JSON.stringify(readPunches_()) });
         }
-        if (ADMIN_ONLY_READ[key] && !isAdmin) return jsonResponse_({ ok: true, value: null });
+        if (ADMIN_ONLY_READ[key] && !isAdmin) return ({ ok: true, value: null });
         var v = readValue_(sheet, key);
         if (key === "employees" && !isAdmin && v != null) v = JSON.stringify(stripPhones_(JSON.parse(v || "[]")));
-        return jsonResponse_({ ok: true, value: v });
+        return ({ ok: true, value: v });
       }
 
       if ((action === "set" || action === "delete") && !isAdmin) {
-        return jsonResponse_({ ok: false, error: "forbidden" });
+        return ({ ok: false, error: "forbidden" });
       }
 
       if (action === "set") {
@@ -396,35 +396,40 @@ function doPost(e) {
           var incoming; try { incoming = JSON.parse(body.value || "[]"); } catch (e3) { incoming = []; }
           var oldEmps = JSON.parse(readValue_(sheet, "employees") || "[]");
           writeValue_(sheet, key, JSON.stringify(mergePhones_(incoming, oldEmps)));
-          return jsonResponse_({ ok: true });
+          return ({ ok: true });
         }
         if (key === "punches") {
           var arr;
           try { arr = JSON.parse(body.value || "[]"); } catch (e2) { arr = []; }
           writePunches_(arr);
-          return jsonResponse_({ ok: true });
+          return ({ ok: true });
         }
         writeValue_(sheet, key, body.value);
-        return jsonResponse_({ ok: true });
+        return ({ ok: true });
       }
 
       if (action === "delete") {
         if (key === "punches") {
           writePunches_([]);
-          return jsonResponse_({ ok: true });
+          return ({ ok: true });
         }
         var row = findRow_(sheet, key);
         if (row !== -1) sheet.deleteRow(row);
-        return jsonResponse_({ ok: true });
+        return ({ ok: true });
       }
 
-      return jsonResponse_({ ok: false, error: "unknown action: " + action });
+      return ({ ok: false, error: "unknown action: " + action });
     } finally {
       lock.releaseLock();
     }
   } catch (err) {
-    return jsonResponse_({ ok: false, error: String(err) });
+    return ({ ok: false, error: String(err) });
   }
+}
+
+// 先結束資料交易、釋放鎖，再產生 HTTP 回應，避免傳輸阻塞其他使用者。
+function doPost(e) {
+  return jsonResponse_(processRequest_(e));
 }
 
 // 方便部署後直接用瀏覽器開網址測試是否部署成功
@@ -454,5 +459,5 @@ function doGet(e) {
 // 與 POST 共用全部密碼、憑證、權限、鎖與打卡去重檢查；只改變回傳通道。
 function bridgeApi(contents) {
   if (typeof contents !== "string") return { ok: false, error: "invalid request" };
-  return JSON.parse(doPost({ postData: { contents: contents } }).getContent());
+  return processRequest_({ postData: { contents: contents } });
 }

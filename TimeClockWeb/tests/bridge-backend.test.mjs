@@ -21,6 +21,27 @@ test('bridge keeps API authentication before touching the spreadsheet', () => {
   assert.equal(b.bridgeApi({}).ok,false);
 });
 
+test('HTTP response construction happens after releasing the transaction lock', () => {
+  const b=backend(); let held=false;
+  b.LockService={getScriptLock:()=>({waitLock(){held=true;},releaseLock(){held=false;}})};
+  b.getSheet_=()=>({getDataRange:()=>({getValues:()=>[['key','value'],['employees','[]']]})});
+  b.adminOk_=()=>false;
+  b.jsonResponse_=data=>{assert.equal(held,false);return data;};
+  assert.equal(b.doPost({postData:{contents:JSON.stringify({action:'getAll',keys:['employees'],apiKey:'fixture-key'})}}).ok,true);
+});
+
+test('RPC returns authenticated data without constructing any ContentService response', () => {
+  const b=backend(); let released=false;
+  b.LockService={getScriptLock:()=>({waitLock(){},releaseLock(){released=true;}})};
+  b.getSheet_=()=>({getDataRange:()=>({getValues:()=>[['key','value'],['employees','[{"id":"fixture","phone":"private"}]'],['salary','private-salary']]})});
+  b.adminOk_=()=>false;
+  b.jsonResponse_=()=>{throw new Error('ContentService must not be used for RPC');};
+  const data=b.bridgeApi(JSON.stringify({action:'getAll',keys:['employees','salary'],apiKey:'fixture-key'}));
+  assert.equal(data.values.salary,null);
+  assert.equal(JSON.parse(data.values.employees)[0].phone,undefined);
+  assert.equal(released,true);
+});
+
 test('bridge HTML only accepts approved parent origins and safe correlation identifiers', () => {
   const b=backend(), params={ bridge:'1',bridgeId:'11111111-1111-4111-8111-111111111111',parentOrigin:'https://linosmond.github.io' };
   const html=b.doGet({ parameter:params });
