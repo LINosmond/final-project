@@ -1,3 +1,5 @@
+import { createAppsScriptBridge } from "./appsScriptBridge.js";
+
 // 取代原本 window.storage 的資料層：
 // - shared = true  的資料（employees / punches / holidays / companyLocation）存到 Google 試算表
 // - shared = false 的資料（session，僅代表「這台裝置記得誰登入」）存在瀏覽器 localStorage，不需要跨裝置同步
@@ -12,6 +14,14 @@ const REQUEST_TIMEOUT_MS = 20000;
 // 整批讀取包含完整打卡歷史，Apps Script 實際回應可能超過 20 秒。
 const BULK_READ_TIMEOUT_MS = 60000;
 let requestSequence = 0;
+let bridgeTransport;
+
+function googleBridge() {
+  if (typeof document === "undefined" || !window.addEventListener ||
+    new URL(API_URL).hostname !== "script.google.com") return null;
+  if (!bridgeTransport) bridgeTransport = createAppsScriptBridge({ apiUrl: API_URL, window, document });
+  return bridgeTransport;
+}
 
 function requestUrl() {
   const url = new URL(API_URL);
@@ -56,12 +66,18 @@ async function callApiOnce(action, extra = {}) {
   });
   try {
     const request = (async () => {
+      const payload = { action, apiKey: API_KEY, ...(adminToken ? { adminToken } : {}), ...extra };
+      const bridge = googleBridge();
+      let data;
+      if (bridge) {
+        data = await bridge.request(payload, controller.signal);
+      } else {
       const res = await fetch(requestUrl(), {
         method: "POST",
         cache: "no-store",
         // 用 text/plain 避免瀏覽器對 Apps Script 發出 CORS 預檢請求（preflight）
         headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action, apiKey: API_KEY, ...(adminToken ? { adminToken } : {}), ...extra }),
+        body: JSON.stringify(payload),
         signal: controller.signal,
       });
       if (!res.ok) {
@@ -71,11 +87,12 @@ async function callApiOnce(action, extra = {}) {
         const retryable = res.status === 408 || res.status === 429 || (res.status >= 500 && res.status <= 599);
         throw apiError(`API 回應異常（HTTP ${res.status}）`, "HTTP_ERROR", retryable);
       }
-      const data = await res.json();
+      data = await res.json();
       // Google 偶爾將回應轉回 /exec，POST 會變成 GET，只得到健康檢查而非資料。
       if (isGoogleResponse(res) && data?.ok === true &&
         data.message === "TimeClock API is running. 請用 POST 呼叫。") {
         throw apiError("Google 資料回應暫時無法取得，請稍後重新整理。", "GOOGLE_RESPONSE_ERROR", true);
+      }
       }
       if (!data || typeof data !== "object" || Array.isArray(data) || typeof data.ok !== "boolean") {
         throw apiError("伺服器回傳的資料格式不正確，請稍後重新整理。", "INVALID_RESPONSE");

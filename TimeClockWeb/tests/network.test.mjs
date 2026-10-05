@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
 
-const source = await fs.readFile(new URL('../src/storage.js', import.meta.url), 'utf8');
+const source = (await fs.readFile(new URL('../src/storage.js', import.meta.url), 'utf8'))
+  .replace('import { createAppsScriptBridge } from "./appsScriptBridge.js";', '');
 
 function client(fetchImpl, { deadlineMs = 1000, url = 'https://fixture.invalid/api' } = {}) {
   const requests = [];

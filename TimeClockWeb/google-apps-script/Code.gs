@@ -429,5 +429,30 @@ function doPost(e) {
 
 // 方便部署後直接用瀏覽器開網址測試是否部署成功
 function doGet(e) {
+  if (e && e.parameter && e.parameter.bridge === "1") {
+    var id = String(e.parameter.bridgeId || "");
+    var origin = String(e.parameter.parentOrigin || "");
+    if (!/^[a-zA-Z0-9-]{16,80}$/.test(id) ||
+      !(origin === "https://linosmond.github.io" || /^http:\/\/localhost:\d+$/.test(origin))) {
+      return HtmlService.createHtmlOutput("Invalid bridge request");
+    }
+    var html = '<!doctype html><html><head><meta charset="utf-8"></head><body><script>' +
+      'const channel="timeclock-api-v1",bridgeId=' + JSON.stringify(id) + ',parentOrigin=' + JSON.stringify(origin) + ';' +
+      'function send(packet){window.top.postMessage(Object.assign({channel:channel,bridgeId:bridgeId},packet),parentOrigin);}' +
+      'window.addEventListener("message",function(event){' +
+      'const packet=event.data;' +
+      'if(event.origin!==parentOrigin||event.source!==window.top||!packet||packet.channel!==channel||packet.bridgeId!==bridgeId||packet.type!=="request")return;' +
+      'google.script.run.withSuccessHandler(function(data){send({type:"result",requestId:packet.requestId,data:data});})' +
+      '.withFailureHandler(function(){send({type:"result",requestId:packet.requestId,failed:true});})' +
+      '.bridgeApi(JSON.stringify(packet.payload));' +
+      '});send({type:"ready"});</script></body></html>';
+    return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
   return jsonResponse_({ ok: true, message: "TimeClock API is running. 請用 POST 呼叫。" });
+}
+
+// 與 POST 共用全部密碼、憑證、權限、鎖與打卡去重檢查；只改變回傳通道。
+function bridgeApi(contents) {
+  if (typeof contents !== "string") return { ok: false, error: "invalid request" };
+  return JSON.parse(doPost({ postData: { contents: contents } }).getContent());
 }
