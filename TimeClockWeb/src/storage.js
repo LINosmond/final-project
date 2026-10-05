@@ -11,6 +11,24 @@ let adminToken = "";
 const REQUEST_TIMEOUT_MS = 20000;
 // 整批讀取包含完整打卡歷史，Apps Script 實際回應可能超過 20 秒。
 const BULK_READ_TIMEOUT_MS = 60000;
+let requestSequence = 0;
+
+function requestUrl() {
+  const url = new URL(API_URL);
+  // ContentService 會轉到一次性回應網址；每次呼叫（含重試）都重新取得轉址。
+  if (url.hostname === "script.google.com" && /^\/macros\/s\/[^/]+\/exec$/.test(url.pathname)) {
+    url.searchParams.set("_tc", `${Date.now().toString(36)}-${++requestSequence}`);
+  }
+  return url.href;
+}
+
+function isGoogleResponse(res) {
+  if (!res.redirected) return false;
+  try {
+    return new URL(API_URL).hostname === "script.google.com" &&
+      new URL(res.url).hostname === "script.googleusercontent.com";
+  } catch { return false; }
+}
 
 function apiError(message, code, retryable = false) {
   const error = new Error(message);
@@ -38,18 +56,27 @@ async function callApiOnce(action, extra = {}) {
   });
   try {
     const request = (async () => {
-      const res = await fetch(API_URL, {
+      const res = await fetch(requestUrl(), {
         method: "POST",
+        cache: "no-store",
         // 用 text/plain 避免瀏覽器對 Apps Script 發出 CORS 預檢請求（preflight）
         headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify({ action, apiKey: API_KEY, ...(adminToken ? { adminToken } : {}), ...extra }),
         signal: controller.signal,
       });
       if (!res.ok) {
+        if (res.status === 404 && isGoogleResponse(res)) {
+          throw apiError("Google 資料回應暫時無法取得，請稍後重新整理。", "GOOGLE_RESPONSE_ERROR", true);
+        }
         const retryable = res.status === 408 || res.status === 429 || (res.status >= 500 && res.status <= 599);
         throw apiError(`API 回應異常（HTTP ${res.status}）`, "HTTP_ERROR", retryable);
       }
       const data = await res.json();
+      // Google 偶爾將回應轉回 /exec，POST 會變成 GET，只得到健康檢查而非資料。
+      if (isGoogleResponse(res) && data?.ok === true &&
+        data.message === "TimeClock API is running. 請用 POST 呼叫。") {
+        throw apiError("Google 資料回應暫時無法取得，請稍後重新整理。", "GOOGLE_RESPONSE_ERROR", true);
+      }
       if (!data || typeof data !== "object" || Array.isArray(data) || typeof data.ok !== "boolean") {
         throw apiError("伺服器回傳的資料格式不正確，請稍後重新整理。", "INVALID_RESPONSE");
       }
@@ -74,21 +101,23 @@ async function callApiOnce(action, extra = {}) {
   }
 }
 
-// 只為讀取與後端已去重的操作重試一次。整包覆寫、刪除、審核不自動重送，
+// 只為讀取與後端已去重的操作重試。Google 一次性回應網址失效最多重試兩次，其他暫時錯誤一次。
+// 整包覆寫、刪除、審核不自動重送，
 // 避免「伺服器已完成但回覆遺失」時再次覆蓋期間其他人的修改。
 async function callApi(action, extra = {}) {
   const readOnly = action === "get" || action === "getAll" || action === "adminLogin" || action === "getMySalary";
   const idempotent = (action === "appendPunch" && Boolean(extra.entry?.id)) ||
     (action === "findOrCreateEmployee" && Boolean(extra.name && extra.phone));
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       return await callApiOnce(action, extra);
     } catch (error) {
-      if (attempt === 0 && error.retryable && (readOnly || idempotent)) {
-        await sleep(600);
+      const retries = error.code === "GOOGLE_RESPONSE_ERROR" ? 2 : 1;
+      if (attempt < retries && error.retryable && (readOnly || idempotent)) {
+        await sleep(600 * (attempt + 1));
         continue;
       }
-      if (!readOnly && ["TIMEOUT", "NETWORK_ERROR", "HTTP_ERROR", "INVALID_RESPONSE"].includes(error.code)) {
+      if (!readOnly && ["TIMEOUT", "NETWORK_ERROR", "HTTP_ERROR", "GOOGLE_RESPONSE_ERROR", "INVALID_RESPONSE"].includes(error.code)) {
         error.message += " 操作結果尚未確認，請先重新整理核對，避免重複操作。";
         error.resultUnknown = true;
       }

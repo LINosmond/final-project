@@ -12,6 +12,7 @@ function client(fetchImpl, { deadlineMs = 1000, url = 'https://fixture.invalid/a
   const timers = new Set();
   const context = vm.createContext({
     AbortController,
+    URL,
     window: {
       localStorage: {
         getItem: key => local.get(key) ?? null,
@@ -48,6 +49,73 @@ function client(fetchImpl, { deadlineMs = 1000, url = 'https://fixture.invalid/a
 function response(data, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => data };
 }
+
+const scriptUrl = 'https://script.google.com/macros/s/fixture-deployment/exec?existing=kept';
+function google404() {
+  return { ...response({}, 404), redirected: true, url: 'https://script.googleusercontent.com/macros/echo?fixture=expired' };
+}
+
+test('expired Google response redirects recover using fresh requests without caching', async () => {
+  const c = client((_, attempt) => attempt < 3 ? google404() : response({ ok: true, values: { employees: '[]' } }), { url: scriptUrl });
+  assert.deepEqual(await c.storage.getAll(['employees']), { employees: '[]' });
+  assert.equal(c.requests.length, 3);
+  assert.equal(new Set(c.requests.map(request => request.url)).size, 3);
+  for (const request of c.requests) {
+    assert.equal(new URL(request.url).searchParams.get('existing'), 'kept');
+    assert.equal(request.cache, 'no-store');
+    assert.equal(request.headers['Content-Type'], 'text/plain;charset=utf-8');
+  }
+  assert.deepEqual(c.delays, [60000, 600, 60000, 1200, 60000]);
+  assert.equal(c.timers.size, 0);
+});
+
+test('persistent Google redirect failures stop after three attempts', async () => {
+  const c = client(google404, { url: scriptUrl });
+  await assert.rejects(c.storage.getAll(['employees']), { code: 'GOOGLE_RESPONSE_ERROR' });
+  assert.equal(c.requests.length, 3);
+  assert.equal(c.timers.size, 0);
+});
+
+test('an endpoint 404 or unrelated redirect never triggers Google response recovery', async () => {
+  for (const failure of [
+    { ...response({}, 404), redirected: false, url: scriptUrl },
+    { ...response({}, 404), redirected: true, url: 'https://example.com/not-found' },
+  ]) {
+    const c = client(() => failure, { url: scriptUrl });
+    await assert.rejects(c.storage.getAll(['employees']), { code: 'HTTP_ERROR', retryable: false });
+    assert.equal(c.requests.length, 1);
+  }
+});
+
+test('lost Google replies never replay writes without server deduplication', async () => {
+  for (const operation of [
+    storage => storage.set('salary', '{}', true),
+    storage => storage.delete('salary', true),
+    storage => storage.reviewEmployee('fixture-employee', 'approve'),
+  ]) {
+    const c = client(google404, { url: scriptUrl });
+    await assert.rejects(operation(c.storage), { code: 'GOOGLE_RESPONSE_ERROR', resultUnknown: true });
+    assert.equal(c.requests.length, 1);
+  }
+});
+
+test('Google reply recovery retains the same deduplicated punch identity', async () => {
+  const entry = { id: 'fixture-punch', employeeId: 'fixture-employee', type: 'in', ts: 1234 };
+  const c = client((_, attempt) => attempt === 1 ? google404() : response({ ok: true, punches: [entry] }), { url: scriptUrl });
+  assert.deepEqual(await c.storage.appendPunch(entry), [entry]);
+  assert.deepEqual(c.requests[0].body, c.requests[1].body);
+  assert.notEqual(c.requests[0].url, c.requests[1].url);
+});
+
+test('a Google redirect that loses the POST response retries the original read', async () => {
+  const c = client((_, attempt) => attempt === 1 ? {
+    ...response({ ok: true, message: 'TimeClock API is running. 請用 POST 呼叫。' }),
+    redirected: true, url: 'https://script.googleusercontent.com/macros/echo?fixture=health',
+  } : response({ ok: true, values: { employees: '[]' } }), { url: scriptUrl });
+  assert.deepEqual(await c.storage.getAll(['employees']), { employees: '[]' });
+  assert.equal(c.requests.length, 2);
+  assert.deepEqual(c.requests[0].body, c.requests[1].body);
+});
 
 test('getAll accepts explicit missing values and rejects incomplete or malformed response data', async () => {
   const valid = client(() => response({ ok: true, values: { employees: '[]', punches: null } }));
