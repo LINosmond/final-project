@@ -589,9 +589,11 @@ export default function TimeClockApp() {
             setSalary((prev) => (sal && Object.keys(sal).length === 0 && prev && Object.keys(prev).length > 0 ? prev : sal));
           }
         }
-      } catch {
+      } catch (err) {
         if (mounted.current && currentScope.current === syncScope) {
-          setSyncError("暫時無法更新資料，請檢查網路後重試。登入狀態已保留。");
+          // 附上實際錯誤原因，方便判斷是網路、逾時還是後端錯誤
+          const detail = err && err.message ? `（原因：${String(err.message).slice(0, 160)}）` : "";
+          setSyncError(`暫時無法更新資料，請檢查網路後重試。登入狀態已保留。${detail}`);
         }
       }
     })();
