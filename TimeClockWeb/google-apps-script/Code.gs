@@ -80,6 +80,10 @@ function readPunches_() {
   var last = sh.getLastRow();
   if (last < 2) return [];
   var data = sh.getRange(2, 1, last - 1, PUNCH_COLS).getValues();
+  return punchRowsToObjects_(data);
+}
+
+function punchRowsToObjects_(data) {
   var out = [];
   for (var i = 0; i < data.length; i++) {
     var row = data[i];
@@ -109,8 +113,8 @@ function punchToRow_(p) {
 }
 
 // 整批覆寫打卡紀錄（管理員補登、還原備份時用）：清掉舊列再重寫
-function writePunches_(punches) {
-  var sh = getPunchSheet_();
+function writePunches_(punches, existingSheet) {
+  var sh = existingSheet || getPunchSheet_();
   var last = sh.getLastRow();
   if (last > 1) sh.getRange(2, 1, last - 1, PUNCH_COLS).clearContent();
   if (punches && punches.length) {
@@ -247,12 +251,27 @@ function processRequest_(e) {
         for (var wp = 0; wp < wantKeys.length; wp++) {
           if (wantKeys[wp] === "punches") { wantsPunches = true; break; }
         }
-        if (wantsPunches) migratePunchesIfNeeded_(sheet);
+        // Read the Punches sheet once, including its header. Avoid reopening it
+        // and asking for the last row separately for migration and for reading.
+        var allPunches;
+        if (wantsPunches) {
+          var punchSheet = getPunchSheet_();
+          var punchRows = punchSheet.getDataRange().getValues();
+          if (punchRows.length <= 1 && map.punches && map.punches !== "[]") {
+            var legacyPunches;
+            try { legacyPunches = JSON.parse(map.punches); } catch (migrationError) { legacyPunches = null; }
+            if (Array.isArray(legacyPunches) && legacyPunches.length) {
+              writePunches_(legacyPunches, punchSheet);
+              punchRows = punchSheet.getDataRange().getValues();
+            }
+          }
+          allPunches = punchRowsToObjects_(punchRows.slice(1));
+        }
         var values = {};
         for (var k = 0; k < wantKeys.length; k++) {
           var wk = wantKeys[k];
           if (wk === "punches") {
-            values[wk] = JSON.stringify(readPunches_());
+            values[wk] = JSON.stringify(allPunches);
           } else if (ADMIN_ONLY_READ[wk] && !isAdmin) {
             values[wk] = null; // 受保護資料：非管理員一律讀不到
           } else if (wk === "employees" && !isAdmin) {

@@ -5,6 +5,8 @@ import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { transformWithEsbuild } from 'vite';
 import React from 'react';
+import { webcrypto, createHash } from 'node:crypto';
+import * as snapshots from '../src/startupSnapshot.js';
 import { create, act } from 'react-test-renderer';
 
 // Compile the real component in memory; tests never contact the live backend.
@@ -26,7 +28,7 @@ const fixtureData = (employees = [employee]) => ({
   salary: '{}', declaration: '{}',
 });
 
-async function mountApp(t, { session = savedEmployee, data = fixtureData(), responses = [], visibility = 'visible' } = {}) {
+async function mountApp(t, { session = savedEmployee, data = fixtureData(), responses = [], visibility = 'visible', previewStore = new Map() } = {}) {
   let storedSession = session === null ? null : JSON.stringify(session);
   let view, nextTimer = 0, visibilityState = visibility;
   const intervals = new Map(), timeouts = new Map(), listeners = new Map();
@@ -94,8 +96,11 @@ async function mountApp(t, { session = savedEmployee, data = fixtureData(), resp
   };
   const module = { exports: {} };
   const context = vm.createContext({
-    require, module, exports: module.exports, console,
-    window: { storage, ...eventTarget }, document,
+    require: name => name === './startupSnapshot.js' ? snapshots : require(name), module, exports: module.exports, console,
+    window: { storage, crypto: { subtle: { digest: async (_,bytes) => createHash('sha256').update(bytes).digest() } }, sessionStorage: {
+      getItem: key => previewStore.get(key) ?? null,
+      setItem: (key, value) => previewStore.set(key, value), removeItem: key => previewStore.delete(key),
+    }, ...eventTarget }, document,
     setInterval(callback, ms) { const id = ++nextTimer; intervals.set(id, { callback, ms }); return id; },
     clearInterval(id) { intervals.delete(id); },
     setTimeout(callback, ms) { const id = ++nextTimer; timeouts.set(id, { callback, ms }); return id; },
@@ -267,6 +272,49 @@ test('管理員同步仍載入薪資及申報資料', async t => {
   const allKeys = new Set(app.state.calls.flatMap(call => call.keys));
   assert.ok(allKeys.has('salary'));
   assert.ok(allKeys.has('declaration'));
+});
+
+test('管理員重新整理立即顯示唯讀暫存，雲端更新前不可修改或進入薪資', async t => {
+  const previewStore = new Map();
+  const storage = { setItem: (key,value) => previewStore.set(key,value) };
+  await snapshots.writeAdminSnapshot(storage, webcrypto, 'fixture-token', {
+    employees: [employee], punches: [], holidays: {}, otMultiplier: 2,
+  });
+  const gate = deferred();
+  const app = await mountApp(t, {
+    session: { id: 'admin', type: 'admin', token: 'fixture-token' }, previewStore, responses: [gate.promise],
+  });
+  assert.equal(app.has('AdminView'), true);
+  assert.match(app.text(), /暫存紀錄.*唯讀/);
+  assert.doesNotMatch(app.text(), /員工管理|移除員工|正在載入打卡資料/);
+  assert.equal(app.view.root.findByType('table') !== null, true);
+  const admin = () => app.view.root.find(n => typeof n.type === 'function' && n.type.name === 'AdminView');
+  assert.equal(admin().props.canEdit, false);
+  assert.equal(app.has('SalaryPanel'), false);
+  await app.finish(gate);
+  assert.equal(admin().props.canEdit, true);
+  assert.match(app.text(), /員工管理|已更新雲端資料/);
+  assert.doesNotMatch(app.text(), /暫存紀錄/);
+});
+
+test('暫存載入後連線失敗仍唯讀，登出清除暫存；員工不使用管理員暫存', async t => {
+  const previewStore = new Map();
+  await snapshots.writeAdminSnapshot({ setItem: (k,v) => previewStore.set(k,v) }, webcrypto, 'fixture-token', {
+    employees: [employee], punches: [], holidays: {}, otMultiplier: 2,
+  });
+  const gate = deferred();
+  const app = await mountApp(t, { session: { id: 'admin', type: 'admin', token: 'fixture-token' }, previewStore, responses: [gate.promise] });
+  await act(async () => { gate.reject(new Error('Fixture offline')); });
+  assert.match(app.text(), /唯讀.*等待重新連線/);
+  assert.equal(app.view.root.find(n => typeof n.type === 'function' && n.type.name === 'AdminView').props.canEdit, false);
+  const employeeGate = deferred();
+  const employeeApp = await mountApp(t, { previewStore, responses: [employeeGate.promise] });
+  assert.equal(employeeApp.has('PunchView'), false);
+  assert.equal(employeeApp.has('AdminView'), false);
+  await app.logout();
+  assert.equal(previewStore.has(snapshots.SNAPSHOT_KEY), false);
+  assert.equal(app.has('AdminView'), false);
+  await employeeApp.finish(employeeGate);
 });
 
 test('暫時同步失敗保留已確認帳號與打卡畫面', async t => {

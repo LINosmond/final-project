@@ -12,6 +12,7 @@ const source = await fs.readFile(new URL('../src/App.jsx', import.meta.url), 'ut
 const { code } = await transformWithEsbuild(source, 'App.jsx', { loader: 'jsx', jsx: 'transform' });
 const generated = resolve('node_modules/.cache/timeclock-test/App.mjs');
 await fs.mkdir(resolve('node_modules/.cache/timeclock-test'), { recursive: true });
+await fs.copyFile(new URL('../src/startupSnapshot.js', import.meta.url), resolve('node_modules/.cache/timeclock-test/startupSnapshot.js'));
 await fs.writeFile(generated, code);
 const { default: App, SalaryPanel, salaryEffectiveRecord, salaryHoursOf, salaryCalc, computeMonthRows } = await import(pathToFileURL(generated));
 const emp = { id: 'test', name: 'Test', status: 'active' };

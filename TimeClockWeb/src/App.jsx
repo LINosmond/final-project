@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { readAdminSnapshot, writeAdminSnapshot, clearAdminSnapshot } from "./startupSnapshot.js";
 
 const FONT_IMPORT = "https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap";
 
@@ -382,6 +383,7 @@ function PendingView({ emp }) {
 
 export default function TimeClockApp() {
   const [now, setNow] = useState(new Date());
+  const openedAt = useRef(Date.now());
   const [tab, setTab] = useState("punch");
   const [employees, setEmployees] = useState(null);
   const [punches, setPunches] = useState(null);
@@ -400,6 +402,8 @@ export default function TimeClockApp() {
   const [syncError, setSyncError] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [readyScope, setReadyScope] = useState("");
+  const [preview, setPreview] = useState(null);
+  const adminSessionToken = useRef("");
   const syncInFlight = useRef(null);
   const mounted = useRef(false);
   const syncScope = sessionChecked ? `${sessionType}:${sessionId}` : "restoring";
@@ -438,6 +442,16 @@ export default function TimeClockApp() {
         if (parsed?.type === "admin" && typeof parsed.token === "string" && parsed.token) {
           // 管理員憑證要先交給資料層，之後的請求才有管理員權限（沒有憑證的舊紀錄需重新登入）
           window.storage.setAdminToken(parsed.token);
+          adminSessionToken.current = parsed.token;
+          const savedPreview = await readAdminSnapshot(window.sessionStorage, window.crypto, parsed.token);
+          if (!active) return;
+          if (savedPreview) {
+            setEmployees(savedPreview.data.employees);
+            setPunches(savedPreview.data.punches);
+            setHolidays(savedPreview.data.holidays);
+            setOtMultiplier(savedPreview.data.otMultiplier);
+            setPreview({ scope: "admin:admin", at: savedPreview.at });
+          }
           setSessionId("admin");
           setSessionType("admin");
         } else if (parsed?.type === "employee" && typeof parsed.id === "string" && parsed.id) {
@@ -573,7 +587,14 @@ export default function TimeClockApp() {
         }
 
         setReadyScope(syncScope);
+        setPreview(null);
         setSyncError("");
+        if (sessionType === "admin" && !employeesPending.current && !punchesWriteInFlight.current) {
+          const token = adminSessionToken.current;
+          void writeAdminSnapshot(window.sessionStorage, window.crypto, token, {
+            employees: emp, punches: pun, holidays: hol, otMultiplier: ot,
+          }, () => mounted.current && currentScope.current === syncScope && adminSessionToken.current === token);
+        }
         const sal = parse(values.salary, {});
         if (sal !== undefined) {
           const pend = salaryPending.current;
@@ -822,6 +843,8 @@ export default function TimeClockApp() {
         return "error";
       }
       if (!token) return "wrong";
+      adminSessionToken.current = token;
+      setPreview(null);
       setSessionId("admin");
       setSessionType("admin");
       await rememberSession("admin", "admin", token);
@@ -882,6 +905,9 @@ export default function TimeClockApp() {
 
   const handleLogout = async () => {
     currentScope.current = ":";
+    adminSessionToken.current = "";
+    setPreview(null);
+    clearAdminSnapshot(window.sessionStorage);
     window.storage.adminLogout();
     setSessionPw("");
     setSessionId("");
@@ -1062,7 +1088,8 @@ export default function TimeClockApp() {
     }
   };
 
-  const loading = !sessionChecked || (!!sessionType && (
+  const previewOnly = isAdmin && preview?.scope === syncScope && readyScope !== syncScope;
+  const loading = !sessionChecked || (!!sessionType && !previewOnly && (
     readyScope !== syncScope || employees === null || punches === null || holidays === null ||
     otMultiplier === null || (isAdmin && salary === null)
   ));
@@ -1114,6 +1141,14 @@ export default function TimeClockApp() {
         </div>
 
         {sessionNotice && <div role="status" style={{ color: COLORS.textMuted, fontSize: 13, padding: "12px 0" }}>{sessionNotice}</div>}
+        {isAdmin && !loading && (
+          <div role="status" data-testid="sync-status" data-state={previewOnly ? "preview" : "ready"}
+            style={{ color: COLORS.textMuted, fontSize: 12, lineHeight: 1.6, marginBottom: 12 }}>
+            {previewOnly
+              ? `暫存紀錄（${new Date(preview.at).toLocaleTimeString("zh-TW", { hour12: false })}）· 唯讀，${syncError ? "等待重新連線" : "正在更新雲端資料…"}`
+              : syncing ? "正在更新雲端資料…" : "已更新雲端資料"}
+          </div>
+        )}
         {syncError && (
           <div role="status" style={{ color: COLORS.textMuted, fontSize: 13, lineHeight: 1.8, padding: "12px 0" }}>
             <div>{syncError}</div>
@@ -1123,6 +1158,11 @@ export default function TimeClockApp() {
         {loading ? (
           <div style={{ textAlign: "center", padding: "60px 0", color: COLORS.textMuted, fontSize: 14 }}>
             {syncError ? "資料尚未載入完成" : "正在載入打卡資料…"}
+            {!syncError && now.getTime() - openedAt.current >= 8000 && (
+              <div style={{ fontSize: 12, lineHeight: 1.8, marginTop: 12 }}>
+                連線較慢，仍在取得最新資料（{Math.floor((now.getTime() - openedAt.current) / 1000)} 秒）
+              </div>
+            )}
           </div>
         ) : awaitingEmployee ? (
           <div role="status" style={{ textAlign: "center", padding: "40px 0", color: COLORS.textMuted, fontSize: 14, lineHeight: 1.8 }}>
@@ -1143,7 +1183,7 @@ export default function TimeClockApp() {
               employees={employees}
               punches={punches}
               holidays={holidays}
-              canEdit
+              canEdit={!previewOnly}
               onAddEmployee={addEmployeeAdmin}
               onRemoveEmployee={removeEmployeeAdmin}
               onUpdateDay={updateDayPunch}

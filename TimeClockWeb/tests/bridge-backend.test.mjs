@@ -54,3 +54,34 @@ test('bridge HTML only accepts approved parent origins and safe correlation iden
   }
   assert.equal(b.doGet({parameter:{...params,bridgeId:'</script><script>evil()'}}).html,'Invalid bridge request');
 });
+
+test('getAll reads Punches once while retaining auth, numeric timestamps and empty-row filtering', () => {
+  const b=backend(); let reads=0, released=false;
+  b.LockService={getScriptLock:()=>({waitLock(){},releaseLock(){released=true;}})};
+  b.getSheet_=()=>({getDataRange:()=>({getValues:()=>[['key','value'],['salary','private-salary']]})});
+  b.adminOk_=()=>false;
+  b.getPunchSheet_=()=>({getDataRange:()=>({getValues(){reads++;return [
+    ['id','employeeId','employeeName','type','ts','actualTs'],
+    ['p1','e1','Fixture','in','1000','1200'],['','','','','',''],
+  ];}})});
+  const result=b.bridgeApi(JSON.stringify({ action:'getAll', keys:['punches','salary'], apiKey:'fixture-key' }));
+  assert.equal(result.ok,true);
+  assert.equal(reads,1);
+  assert.equal(result.values.salary,null);
+  assert.deepEqual(JSON.parse(result.values.punches),[{id:'p1',employeeId:'e1',employeeName:'Fixture',type:'in',ts:1000,actualTs:1200}]);
+  assert.equal(released,true);
+});
+
+test('getAll still migrates a legacy punch blob inside the same lock', () => {
+  const b=backend(); let rows=[['id','employeeId','employeeName','type','ts','actualTs']],writes=0,held=false;
+  const legacy=[{id:'p1',employeeId:'e1',employeeName:'Fixture',type:'in',ts:1000}];
+  const sheet={getDataRange:()=>({getValues:()=>rows})};
+  b.LockService={getScriptLock:()=>({waitLock(){held=true;},releaseLock(){held=false;}})};
+  b.getSheet_=()=>({getDataRange:()=>({getValues:()=>[['key','value'],['punches',JSON.stringify(legacy)]]})});
+  b.adminOk_=()=>false; b.getPunchSheet_=()=>sheet;
+  b.writePunches_=(punches,existing)=>{assert.equal(held,true);assert.equal(existing,sheet);writes++;rows=[rows[0],...punches.map(p=>b.punchToRow_(p))];};
+  const result=b.bridgeApi(JSON.stringify({action:'getAll',keys:['punches'],apiKey:'fixture-key'}));
+  assert.equal(result.ok,true); assert.equal(writes,1);
+  assert.deepEqual(JSON.parse(result.values.punches),legacy);
+  assert.equal(held,false);
+});
