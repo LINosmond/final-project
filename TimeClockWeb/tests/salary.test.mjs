@@ -15,7 +15,25 @@ await fs.mkdir(resolve('node_modules/.cache/timeclock-test'), { recursive: true 
 await fs.copyFile(new URL('../src/startupSnapshot.js', import.meta.url), resolve('node_modules/.cache/timeclock-test/startupSnapshot.js'));
 await fs.writeFile(generated, code);
 const { default: App, SalaryPanel, salaryEffectiveRecord, salaryHoursOf, salaryCalc, computeMonthRows } = await import(pathToFileURL(generated));
+const { visibleDeclarationSnapshot, isCurrentEmployee, buildDeclarationSnapshot } = await import(pathToFileURL(generated));
 const emp = { id: 'test', name: 'Test', status: 'active' };
+
+test('封存員工從薪資、列印與申報快照過濾，舊固定申報資料保留不變',async()=>{
+  const archived={id:'archive-fixture',name:'Archived Fixture',status:'archived'};
+  const pending={id:'pending-fixture',name:'Pending Fixture',status:'pending'};
+  assert.equal(isCurrentEmployee({...emp,status:undefined}),true);
+  assert.equal(isCurrentEmployee(archived),false);
+  const snapshot={generatedAt:1000,emps:{test:{name:'Test',rec:{netRounded:123}},'archive-fixture':{name:'Archived Fixture',rec:{netRounded:456}}}};
+  const filtered=visibleDeclarationSnapshot(snapshot,[emp,archived,pending]);
+  assert.deepEqual(Object.keys(filtered.emps),[emp.id]);
+  assert.equal(snapshot.emps[archived.id].rec.netRounded,456);
+  let view;
+  await act(async()=>{view=create(React.createElement(SalaryPanel,{employees:[emp,archived,pending],punches:[],holidays:{},salary:{},otMultiplier:2}));});
+  assert.doesNotMatch(JSON.stringify(view.toJSON()),/Archived Fixture|Pending Fixture/);
+  await act(async()=>view.unmount());
+  const generatedSnap=buildDeclarationSnapshot([emp,archived,pending],Object.fromEntries([emp,archived,pending].map(e=>[e.id,{defaults:{position:'月薪'}}])),[],2026,10,2,{});
+  assert.deepEqual(Object.keys(generatedSnap.emps),[emp.id]);
+});
 const date = new Date();
 const year = date.getFullYear(), month = date.getMonth() + 1;
 const ym = `${year}-${String(month).padStart(2, '0')}`;

@@ -43,6 +43,46 @@ function seeded() {
   return b;
 }
 
+test('封存與還原僅管理員可執行，保留原帳號、打卡、薪資及申報資料', () => {
+  const b=seeded();
+  b.kv.set('punches','[{"id":"p1","employeeId":"e1"}]');
+  b.kv.set('declaration','{"2026-09":{"emps":{"e1":{"name":"甲"}}}}');
+  const retained=Object.fromEntries([...b.kv].filter(([k])=>k!=='employees'));
+  assert.equal(b.call({action:'setEmployeeArchived',id:'e1',archived:true}).error,'forbidden');
+  const result=b.call({action:'setEmployeeArchived',id:'e1',archived:true,...A});
+  const archived=result.employees.find(e=>e.id==='e1');
+  assert.equal(archived.status,'archived'); assert.ok(archived.archivedAt);
+  assert.equal(archived.phone,emps[0].phone);
+  assert.deepEqual(Object.fromEntries([...b.kv].filter(([k])=>k!=='employees')),retained);
+  const restored=b.call({action:'setEmployeeArchived',id:'e1',archived:false,...A}).employees.find(e=>e.id==='e1');
+  assert.deepEqual(restored,emps[0]);
+  assert.deepEqual(Object.fromEntries([...b.kv].filter(([k])=>k!=='employees')),retained);
+});
+
+test('封存帳號不得登入或查薪資，一般名單只回停用識別，不洩露姓名與手機', () => {
+  const b=seeded();
+  b.call({action:'set',key:'salaryVisible',value:'true',...A});
+  b.call({action:'setEmployeeArchived',id:'e1',archived:true,...A});
+  assert.equal(b.call({action:'findOrCreateEmployee',name:'甲',phone:'11111111'}).error,'employee archived');
+  assert.equal(b.call({action:'getMySalary',name:'甲',phone:'11111111'}).error,'unauthorized');
+  const list=JSON.parse(b.call({action:'getAll',keys:['employees']}).values.employees);
+  assert.deepEqual(list.find(e=>e.id==='e1'),{id:'e1',status:'archived'});
+  assert.doesNotMatch(JSON.stringify(list),/11111111|甲/);
+  assert.equal(b.call({action:'reviewEmployee',id:'e1',decision:'approve',...A}).error,'employee archived');
+});
+
+test('舊名單排序或覆寫不能取消封存；省略封存帳號也保留其資料', () => {
+  const b=seeded();
+  b.call({action:'setEmployeeArchived',id:'e1',archived:true,...A});
+  const archived=JSON.parse(b.kv.get('employees')).find(e=>e.id==='e1');
+  for(const stale of [emps, [emps[1]]]) {
+    b.call({action:'set',key:'employees',value:JSON.stringify(stale),...A});
+    assert.deepEqual(JSON.parse(b.kv.get('employees')).find(e=>e.id==='e1'),archived);
+  }
+  assert.equal(b.call({action:'setEmployeeArchived',id:'e1',archived:'true',...A}).ok,false);
+  assert.equal(b.call({action:'setEmployeeArchived',id:'missing',archived:true,...A}).ok,false);
+});
+
 test('非管理員不能寫入、審核，讀不到薪資與手機號碼', () => {
   const b = seeded();
   assert.equal(b.call({ action: 'set', key: 'employees', value: '[]' }).ok, false);

@@ -35,6 +35,7 @@ async function mountApp(t, { session = savedEmployee, data = fixtureData(), resp
   const state = {
     data, failReads: false, failSessionSave: false, reviewError: null,
     calls: [], writes: [], reviews: [], sessionReads: 0, active: 0, maxActive: 0, responses: [...responses],
+    archives: [], archiveResponses: [],
   };
   const storage = {
     async getAll(keys) {
@@ -80,6 +81,13 @@ async function mountApp(t, { session = savedEmployee, data = fixtureData(), resp
       state.reviews.push({ id, decision });
       if (state.reviewError) throw state.reviewError;
       throw new Error('Unexpected fixture review');
+    },
+    async setEmployeeArchived(id, archived) {
+      state.archives.push({id,archived});
+      if(state.archiveResponses.length) return await state.archiveResponses.shift();
+      const next=JSON.parse(state.data.employees).map(e=>e.id===id?{...e,status:archived?'archived':'active'}:e);
+      state.data={...state.data,employees:JSON.stringify(next)};
+      return next;
     },
   };
   const eventTarget = {
@@ -153,6 +161,64 @@ async function mountApp(t, { session = savedEmployee, data = fixtureData(), resp
   };
   return app;
 }
+
+async function press(app,label) {
+  const node=app.view.root.findAllByType('button').find(n=>n.props['aria-label']===label||String(n.props.children).includes(label));
+  assert.ok(node,`Button ${label} must exist`);
+  await act(async()=>{ void node.props.onClick(); });
+}
+
+test('封存需確認且等待寫入成功，成功後一般頁面與薪資名單隱藏，封存管理可還原',async t=>{
+  const other={id:'fixture-other',name:'Other Fixture',status:'active'};
+  const app=await mountApp(t,{session:{id:'admin',type:'admin',token:'fixture-token'},data:fixtureData([employee,other])});
+  await press(app,'員工管理');
+  await press(app,`封存 ${employee.name}`);
+  assert.equal(app.state.archives.length,0);
+  const gate=deferred(); app.state.archiveResponses.push(gate.promise);
+  await press(app,'確認封存');
+  assert.match(app.text(),new RegExp(employee.name));
+  const archived={...employee,status:'archived'};
+  const next=[archived,other];
+  app.state.data={...app.state.data,employees:JSON.stringify(next)};
+  await app.finish(gate,next);
+  assert.doesNotMatch(app.text(),new RegExp(employee.name));
+  assert.match(app.text(),/封存管理/);
+  await press(app,'考勤卡');
+  assert.doesNotMatch(app.text(),new RegExp(employee.name));
+  await press(app,'薪資');
+  const salaryPanel=app.view.root.find(n=>typeof n.type==='function'&&n.type.name==='SalaryPanel');
+  assert.deepEqual(salaryPanel.props.employees.map(e=>e.id),[other.id]);
+  await press(app,'員工管理');
+  await press(app,'封存管理');
+  assert.match(app.text(),new RegExp(employee.name));
+  await press(app,`還原 ${employee.name}`);
+  await press(app,'確認還原');
+  assert.equal(app.state.archives.length,2);
+  assert.match(app.text(),/已還原員工/);
+  await press(app,'考勤卡');
+  assert.match(app.text(),new RegExp(employee.name));
+});
+
+test('封存回覆逾時不先隱藏員工、不重送、不整包覆寫也不顯示成功',async t=>{
+  const app=await mountApp(t,{session:{id:'admin',type:'admin',token:'fixture-token'}});
+  await press(app,'員工管理'); await press(app,`封存 ${employee.name}`);
+  const gate=deferred(); app.state.archiveResponses.push(gate.promise);
+  await press(app,'確認封存');
+  await act(async()=>gate.reject(Object.assign(new Error('Fixture timeout'),{resultUnknown:true})));
+  assert.equal(app.state.archives.length,1); assert.equal(app.state.writes.length,0);
+  assert.match(app.text(),/封存操作結果尚未確認/);
+  assert.doesNotMatch(app.text(),/已封存員工/);
+  assert.match(app.text(),new RegExp(employee.name));
+});
+
+test('已記住的封存員工帳號不顯示姓名、打卡、歷史或薪資，可切換帳號',async t=>{
+  const app=await mountApp(t,{data:fixtureData([{id:employee.id,status:'archived'}])});
+  assert.match(app.text(),/此帳號已封存並停用/);
+  assert.equal(app.has('PunchView'),false); assert.equal(app.has('AdminView'),false);
+  assert.equal(app.has('EmployeeSalaryTab'),false);
+  assert.doesNotMatch(app.text(),new RegExp(employee.name));
+  await app.logout(); assert.equal(app.has('LoginView'),true);
+});
 
 test('還原已存員工登入後顯示打卡畫面', async t => {
   const app = await mountApp(t);

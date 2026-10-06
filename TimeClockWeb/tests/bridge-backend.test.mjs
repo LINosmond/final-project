@@ -85,3 +85,20 @@ test('getAll still migrates a legacy punch blob inside the same lock', () => {
   assert.deepEqual(JSON.parse(result.values.punches),legacy);
   assert.equal(held,false);
 });
+
+test('ordinary batch and single reads hide archived attendance while admin backup retains it',()=>{
+  const b=backend(); let isAdmin=false;
+  const employees=[{id:'active',name:'Active'},{id:'archived',name:'Archived',status:'archived'}];
+  const punches=employees.map((e,i)=>({id:'p'+i,employeeId:e.id,employeeName:e.name,type:'in',ts:1000}));
+  b.LockService={getScriptLock:()=>({waitLock(){},releaseLock(){}})};
+  b.getSheet_=()=>({getDataRange:()=>({getValues:()=>[['key','value'],['employees',JSON.stringify(employees)]]})});
+  b.getPunchSheet_=()=>({getDataRange:()=>({getValues:()=>[['id','employeeId','name','type','ts','actualTs'],...punches.map(p=>b.punchToRow_(p))]})});
+  b.adminOk_=()=>isAdmin; b.readValue_=(_,key)=>key==='employees'?JSON.stringify(employees):null;
+  b.readPunches_=()=>punches; b.migratePunchesIfNeeded_=()=>{};
+  const call=(action,extra)=>b.bridgeApi(JSON.stringify({action,apiKey:'fixture-key',...extra}));
+  assert.equal(JSON.parse(call('getAll',{keys:['punches']}).values.punches).length,1);
+  assert.equal(JSON.parse(call('get',{key:'punches'}).value).length,1);
+  isAdmin=true;
+  assert.equal(JSON.parse(call('getAll',{keys:['punches']}).values.punches).length,2);
+  assert.equal(JSON.parse(call('get',{key:'punches'}).value).length,2);
+});

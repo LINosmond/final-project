@@ -268,3 +268,14 @@ test('missing API configuration fails locally and remembered login stays local',
   assert.equal(await c.storage.get('session', false), null);
   assert.equal(c.requests.length, 0);
 });
+
+test('archive has strict response validation and never retries an uncertain state change',async()=>{
+  const unavailable=client(()=>{throw new TypeError('Fixture lost response');});
+  await assert.rejects(unavailable.storage.setEmployeeArchived('e1',true),{code:'NETWORK_ERROR',resultUnknown:true});
+  assert.equal(unavailable.requests.length,1);
+  const broken=client(()=>response({ok:true}));
+  await assert.rejects(broken.storage.setEmployeeArchived('e1',true),{code:'INVALID_RESPONSE'});
+  const good=client(()=>response({ok:true,employees:[{id:'e1',status:'archived'}]}));
+  assert.equal((await good.storage.setEmployeeArchived('e1',true))[0].status,'archived');
+  assert.equal(good.requests[0].body.action,'setEmployeeArchived');
+});

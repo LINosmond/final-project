@@ -226,6 +226,15 @@ const storage = {
     const data = await callApi("reviewEmployee", { id, decision });
     return data.employees;
   },
+
+  // Atomic archive/restore; uncertain responses never replay this mutation.
+  async setEmployeeArchived(id, archived) {
+    const data = await callApi("setEmployeeArchived", { id, archived });
+    if (!Array.isArray(data.employees) || data.employees.some(e => !e || typeof e.id !== "string")) {
+      throw apiError("封存回應不完整，請重新整理核對。", "INVALID_RESPONSE");
+    }
+    return data.employees;
+  },
 };
 
 window.storage = storage;

@@ -196,6 +196,12 @@ function adminOk_(body) {
 function stripPhones_(list) {
   var out = [];
   for (var i = 0; i < list.length; i++) {
+    if (list[i].status === "archived") {
+      // Retain only an identity tombstone so a saved employee session can be
+      // stopped explicitly, without exposing the former employee's data.
+      out.push({ id: list[i].id, status: "archived" });
+      continue;
+    }
     var c = {};
     for (var k in list[i]) { if (k !== "phone") c[k] = list[i][k]; }
     out.push(c);
@@ -207,13 +213,32 @@ function stripPhones_(list) {
 // 以伺服器上原本的手機號碼補回，避免把密碼清掉。
 function mergePhones_(incoming, existing) {
   var byId = {};
+  var included = {};
   for (var i = 0; i < existing.length; i++) byId[existing[i].id] = existing[i];
   for (var j = 0; j < incoming.length; j++) {
+    included[incoming[j].id] = true;
+    // A stale reorder/save must not unarchive or discard an archived account.
+    // Only the dedicated restore operation may return it to active status.
+    if (byId[incoming[j].id] && byId[incoming[j].id].status === "archived") {
+      incoming[j] = byId[incoming[j].id];
+      continue;
+    }
     if ((incoming[j].phone == null || incoming[j].phone === "") && byId[incoming[j].id]) {
       incoming[j].phone = byId[incoming[j].id].phone;
     }
   }
+  for (var a = 0; a < existing.length; a++) {
+    if (existing[a].status === "archived" && !included[existing[a].id]) incoming.push(existing[a]);
+  }
   return incoming;
+}
+
+function withoutArchivedPunches_(punches, employees) {
+  var archived = {};
+  for (var i = 0; i < employees.length; i++) {
+    if (employees[i].status === "archived") archived[employees[i].id] = true;
+  }
+  return punches.filter(function(p) { return !archived[p.employeeId]; });
 }
 
 // 台北時間的「上個月」，格式 YYYY-MM
@@ -271,7 +296,7 @@ function processRequest_(e) {
         for (var k = 0; k < wantKeys.length; k++) {
           var wk = wantKeys[k];
           if (wk === "punches") {
-            values[wk] = JSON.stringify(allPunches);
+            values[wk] = JSON.stringify(isAdmin ? allPunches : withoutArchivedPunches_(allPunches, JSON.parse(map.employees || "[]")));
           } else if (ADMIN_ONLY_READ[wk] && !isAdmin) {
             values[wk] = null; // 受保護資料：非管理員一律讀不到
           } else if (wk === "employees" && !isAdmin) {
@@ -285,8 +310,17 @@ function processRequest_(e) {
       }
 
       if (action === "appendPunch") {
-        migratePunchesIfNeeded_(sheet);
         var entry = body.entry;
+        if (!entry || !entry.employeeId) return { ok: false, error: "missing employee" };
+        var punchEmployees = JSON.parse(readValue_(sheet, "employees") || "[]");
+        var punchEmployee = null;
+        for (var pe = 0; pe < punchEmployees.length; pe++) {
+          if (punchEmployees[pe].id === entry.employeeId) { punchEmployee = punchEmployees[pe]; break; }
+        }
+        if (!punchEmployee || punchEmployee.status === "pending" || punchEmployee.status === "archived") {
+          return { ok: false, error: punchEmployee && punchEmployee.status === "archived" ? "employee archived" : "employee unavailable" };
+        }
+        migratePunchesIfNeeded_(sheet);
         var punches = readPunches_();
         // 依 id 去重：前端送出失敗自動重試時，若上一筆其實已寫入，不會重複附加
         var already = false;
@@ -321,6 +355,7 @@ function processRequest_(e) {
             var masked = {}; for (var mk in existing) { if (mk !== "phone") masked[mk] = existing[mk]; }
             return ({ ok: true, created: false, employee: masked, employees: stripPhones_(employees) });
           }
+          if (existing.status === "archived") return { ok: false, error: "employee archived" };
           return ({ ok: true, created: false, employee: existing, employees: stripPhones_(employees) });
         }
         // 新申請的帳號預設為「待審核（pending）」，需管理員通過後才會變成 active、才能打卡並進入名冊
@@ -331,6 +366,26 @@ function processRequest_(e) {
       }
 
       // 管理員審核：approve = 通過（狀態改 active）；reject = 拒絕（從名冊移除）。
+      if (action === "setEmployeeArchived") {
+        if (!isAdmin) return { ok: false, error: "forbidden" };
+        if (!body.id || typeof body.archived !== "boolean") return { ok: false, error: "invalid archive request" };
+        var archiveEmployees = JSON.parse(readValue_(sheet, "employees") || "[]");
+        var archiveTarget = null;
+        for (var ai = 0; ai < archiveEmployees.length; ai++) {
+          if (archiveEmployees[ai].id === body.id) { archiveTarget = archiveEmployees[ai]; break; }
+        }
+        if (!archiveTarget) return { ok: false, error: "employee not found" };
+        if (archiveTarget.status === "pending") return { ok: false, error: "employee pending" };
+        var desiredStatus = body.archived ? "archived" : "active";
+        if (archiveTarget.status !== desiredStatus) {
+          archiveTarget.status = desiredStatus;
+          if (body.archived) archiveTarget.archivedAt = new Date().toISOString();
+          else delete archiveTarget.archivedAt;
+          writeValue_(sheet, "employees", JSON.stringify(archiveEmployees));
+        }
+        return { ok: true, employees: archiveEmployees };
+      }
+
       if (action === "reviewEmployee") {
         if (!isAdmin) return ({ ok: false, error: "forbidden" });
         var reviewId = body.id;
@@ -342,6 +397,7 @@ function processRequest_(e) {
         var kept = [];
         for (var j = 0; j < emps.length; j++) {
           if (emps[j].id === reviewId) {
+            if (emps[j].status === "archived") return { ok: false, error: "employee archived" };
             if (decision === "approve") {
               emps[j].status = "active";
               kept.push(emps[j]);
@@ -378,7 +434,7 @@ function processRequest_(e) {
         for (var gi = 0; gi < gEmps.length; gi++) {
           if (gEmps[gi].name === gName && String(gEmps[gi].phone) === gPhone) { me = gEmps[gi]; break; }
         }
-        if (!me || me.status === "pending") {
+        if (!me || me.status === "pending" || me.status === "archived") {
           throttleFail_("login:" + gName);
           return ({ ok: false, error: "unauthorized" });
         }
@@ -398,7 +454,8 @@ function processRequest_(e) {
       if (action === "get") {
         if (key === "punches") {
           migratePunchesIfNeeded_(sheet);
-          return ({ ok: true, value: JSON.stringify(readPunches_()) });
+          var readPunches = readPunches_();
+          return ({ ok: true, value: JSON.stringify(isAdmin ? readPunches : withoutArchivedPunches_(readPunches, JSON.parse(readValue_(sheet, "employees") || "[]"))) });
         }
         if (ADMIN_ONLY_READ[key] && !isAdmin) return ({ ok: true, value: null });
         var v = readValue_(sheet, key);

@@ -29,12 +29,23 @@ const ADMIN = { adminPassword: 'fixture-key' };
 
 test('後端：重試同筆打卡不重複，其他員工同時打卡保留', () => {
   const b = backend();
+  b.kv.set('employees', JSON.stringify([{ id:'e1', status:'active' }, { id:'e2' }]));
   const entry = { id: 'p1', employeeId: 'e1', employeeName: 'Fixture', type: 'in', ts: 1000, actualTs: 1200 };
   assert.equal(b.call({ action: 'appendPunch', entry }).punches.length, 1);
   assert.equal(b.call({ action: 'appendPunch', entry }).punches.length, 1);
   const result = b.call({ action: 'appendPunch', entry: { ...entry, id: 'p2', employeeId: 'e2' } });
   assert.equal(result.punches.length, 2); assert.equal(result.punches[0].actualTs, 1200);
   assert.equal(b.releases(), 3);
+});
+
+test('封存及待審核帳號不能新增打卡；不讀寫打卡歷史', () => {
+  const b=backend();
+  b.kv.set('employees',JSON.stringify([{id:'e1',status:'archived'},{id:'e2',status:'pending'}]));
+  for(const employeeId of ['e1','e2','missing']) {
+    const result=b.call({action:'appendPunch',entry:{id:'p1',employeeId,type:'in',ts:1000}});
+    assert.equal(result.ok,false);
+  }
+  assert.deepEqual(JSON.parse(b.call({action:'get',key:'punches',...ADMIN}).value),[]);
 });
 
 test('後端：薪資 null 工時與固定設定完整往返；備份格式不變', () => {

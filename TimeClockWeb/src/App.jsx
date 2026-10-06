@@ -3,6 +3,13 @@ import { readAdminSnapshot, writeAdminSnapshot, clearAdminSnapshot } from "./sta
 
 const FONT_IMPORT = "https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap";
 
+export const isCurrentEmployee = e => !!e && e.status !== "pending" && e.status !== "archived";
+
+export function visibleDeclarationSnapshot(snapshot, employees) {
+  const currentIds = new Set(employees.filter(isCurrentEmployee).map(e => e.id));
+  return { ...snapshot, emps: Object.fromEntries(Object.entries(snapshot?.emps || {}).filter(([id]) => currentIds.has(id))) };
+}
+
 const COLORS = {
   bg: "#1B1A17",
   panel: "#242220",
@@ -404,6 +411,8 @@ export default function TimeClockApp() {
   const [readyScope, setReadyScope] = useState("");
   const [preview, setPreview] = useState(null);
   const adminSessionToken = useRef("");
+  const snapshotRevision = useRef(0);
+  const archiveWrite = useRef(false);
   const syncInFlight = useRef(null);
   const mounted = useRef(false);
   const syncScope = sessionChecked ? `${sessionType}:${sessionId}` : "restoring";
@@ -591,9 +600,11 @@ export default function TimeClockApp() {
         setSyncError("");
         if (sessionType === "admin" && !employeesPending.current && !punchesWriteInFlight.current) {
           const token = adminSessionToken.current;
+          const revision = snapshotRevision.current;
           void writeAdminSnapshot(window.sessionStorage, window.crypto, token, {
             employees: emp, punches: pun, holidays: hol, otMultiplier: ot,
-          }, () => mounted.current && currentScope.current === syncScope && adminSessionToken.current === token);
+          }, () => mounted.current && currentScope.current === syncScope && adminSessionToken.current === token &&
+            snapshotRevision.current === revision && !archiveWrite.current);
         }
         const sal = parse(values.salary, {});
         if (sal !== undefined) {
@@ -657,6 +668,7 @@ export default function TimeClockApp() {
   }, [loadAll, sessionChecked]);
 
   const saveEmployees = async (next) => {
+    if (archiveWrite.current) return;
     const payload = JSON.stringify(next);
     setEmployees(next);
     // 先記下這份內容的簽章；在輪詢讀到伺服器已同步成這份之前，都不讓舊的輪詢回應覆蓋畫面。
@@ -675,7 +687,7 @@ export default function TimeClockApp() {
     const idx = list.findIndex((e) => e.id === id);
     if (idx < 0) return;
     let j = idx + dir;
-    while (j >= 0 && j < list.length && list[j].status === "pending") j += dir;
+    while (j >= 0 && j < list.length && !isCurrentEmployee(list[j])) j += dir;
     if (j < 0 || j >= list.length) return;
     [list[idx], list[j]] = [list[j], list[idx]];
     saveEmployees(list);
@@ -787,7 +799,7 @@ export default function TimeClockApp() {
     if (pm < 1) { pm = 12; py -= 1; }
     const ym = `${py}-${pad2(pm)}`;
     const out = {};
-    (employees || []).filter((e) => e.status !== "pending").forEach((e) => {
+    (employees || []).filter(isCurrentEmployee).forEach((e) => {
       const rec = salaryEffectiveRecord(e, salaryData, punches || [], py, pm, otMultiplier ?? 2, holidays || {});
       const cc = salaryCalc(rec);
       out[e.id] = { ...rec, gross: cc.gross, net: cc.net, netRounded: cc.netRounded };
@@ -857,7 +869,7 @@ export default function TimeClockApp() {
     try {
       result = await window.storage.findOrCreateEmployee(name, phone);
     } catch (e) {
-      flash("登入失敗，請稍後再試", "error");
+      flash(e.message === "employee archived" ? "此帳號已封存並停用，請聯絡管理員。" : "登入失敗，請稍後再試", "error");
       return "error";
     }
     setEmployees(result.employees);
@@ -900,6 +912,33 @@ export default function TimeClockApp() {
       flash(e.resultUnknown ? "審核結果尚未確認，請重新整理核對後再操作" : "審核失敗，請稍後再試", "error");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const setEmployeeArchived = async (id, archived) => {
+    if (archiveWrite.current) return false;
+    const scope = currentScope.current;
+    archiveWrite.current = true;
+    snapshotRevision.current++;
+    clearAdminSnapshot(window.sessionStorage);
+    setBusy(true);
+    try {
+      const fresh = await window.storage.setEmployeeArchived(id, archived);
+      if (!mounted.current || currentScope.current !== scope) return false;
+      const target = fresh.find(e => e.id === id);
+      if (!target || (target.status === "archived") !== archived) throw new Error("封存狀態尚未確認");
+      employeesPending.current = { sig: JSON.stringify(fresh), at: Date.now() };
+      setEmployees(fresh);
+      flash(archived ? "已封存員工，歷史資料已保留" : "已還原員工");
+      return true;
+    } catch (error) {
+      if (mounted.current && currentScope.current === scope) {
+        flash(error.resultUnknown ? "封存操作結果尚未確認，請重新整理核對後再操作" : "封存／還原失敗，請重新整理後再試", "error");
+      }
+      return false;
+    } finally {
+      archiveWrite.current = false;
+      if (mounted.current && currentScope.current === scope) setBusy(false);
     }
   };
 
@@ -963,10 +1002,11 @@ export default function TimeClockApp() {
   };
 
   const sessionEmp = useMemo(
-    () => (employees || []).find((e) => e.id === sessionId) || null,
+    () => (employees || []).find((e) => e.id === sessionId && e.status !== "archived") || null,
     [employees, sessionId]
   );
   const isAdmin = sessionType === "admin";
+  const sessionArchived = sessionType === "employee" && (employees || []).some(e => e.id === sessionId && e.status === "archived");
 
   const employeePunchesToday = useMemo(() => {
     if (!punches || !sessionId) return [];
@@ -1164,6 +1204,11 @@ export default function TimeClockApp() {
               </div>
             )}
           </div>
+        ) : sessionArchived ? (
+          <div role="status" style={{ textAlign: "center", padding: "40px 0", color: COLORS.textMuted, lineHeight: 1.8 }}>
+            <div>此帳號已封存並停用，請聯絡管理員。</div>
+            <button onClick={handleLogout} style={retryButtonStyle}>切換帳號</button>
+          </div>
         ) : awaitingEmployee ? (
           <div role="status" style={{ textAlign: "center", padding: "40px 0", color: COLORS.textMuted, fontSize: 14, lineHeight: 1.8 }}>
             <div>正在確認登入帳號</div>
@@ -1192,6 +1237,7 @@ export default function TimeClockApp() {
               onImportBackup={importBackup}
               onReviewEmployee={reviewEmployee}
               onMoveEmployee={moveEmployeeAdmin}
+              onSetEmployeeArchived={setEmployeeArchived}
               companyLocation={companyLocation}
               onSaveLocation={saveCompanyLocation}
               onClearLocation={clearCompanyLocation}
@@ -1874,6 +1920,7 @@ function typicalTimes(real) {
 
 // 產生某個月的申報快照：{ generatedAt, year, month, emps: { "<id>": { name, chief, days:[{day,wd,in,out,mins}], rec } } }
 function buildDeclarationSnapshot(list, salary, punches, year, month, multiplier, overrides) {
+  list = list.filter(isCurrentEmployee);
   const WD = ["日", "一", "二", "三", "四", "五", "六"];
   const daysInMonth = new Date(year, month, 0).getDate();
   const dow = (d) => WD[new Date(year, month - 1, d).getDay()];
@@ -2017,6 +2064,7 @@ window.onload=function(){setTimeout(function(){fitPages();},500);};
 // 薪資表：選員工＋月份，工作/加班時數自動帶入該月考勤。時薪、加班時薪、勞保、健保、職務為
 // 「每位員工的固定設定」（存一次後每月自動預設）；洗車獎金等每月變動項目逐月填。
 function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSaveSalary }) {
+  employees = employees.filter(isCurrentEmployee);
   const multiplier = otMultiplier ?? 2;
   const overrides = holidays || {};
   const today = new Date();
@@ -2241,13 +2289,14 @@ window.onload=function(){setTimeout(function(){fitPages();},500);};
   );
 }
 
-function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, onAddEmployee, onRemoveEmployee, onUpdateDay, onToggleHoliday, onExportBackup, onImportBackup, onReviewEmployee, onMoveEmployee, companyLocation, onSaveLocation, onClearLocation, otMultiplier, onSaveOtMultiplier, salary, onSaveSalary, declaration, onSaveDeclaration, salaryVisible, onSaveSalaryVisible, onRepublishSalary, busy }) {
+function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, onAddEmployee, onRemoveEmployee, onUpdateDay, onToggleHoliday, onExportBackup, onImportBackup, onReviewEmployee, onMoveEmployee, onSetEmployeeArchived, companyLocation, onSaveLocation, onClearLocation, otMultiplier, onSaveOtMultiplier, salary, onSaveSalary, declaration, onSaveDeclaration, salaryVisible, onSaveSalaryVisible, onRepublishSalary, busy }) {
   const multiplier = otMultiplier ?? 2;
   const today = new Date();
   const overrides = holidays || {};
   // 只有「已審核（active）」的員工才進入考勤名冊；待審核（pending）另外列在審核區。
   // 沒有 status 欄位的舊資料一律視為 active，維持相容。
-  const activeEmployees = employees.filter((e) => e.status !== "pending");
+  const activeEmployees = employees.filter(isCurrentEmployee);
+  const archivedEmployees = employees.filter(e => e.status === "archived");
   const pendingEmployees = employees.filter((e) => e.status === "pending");
   const [employeeId, setEmployeeId] = useState(lockedEmployeeId || activeEmployees[0]?.id || "");
   const [adminTab, setAdminTab] = useState("records"); // 管理員畫面子分頁：records / staff / settings
@@ -2365,7 +2414,8 @@ function AdminView({ employees, punches, holidays, canEdit, lockedEmployeeId, on
         newPhone={newPhone} setNewPhone={setNewPhone}
         submitAddEmployee={submitAddEmployee} busy={busy}
       />
-      <AccountListPanel employees={activeEmployees} onMove={onMoveEmployee} />
+      <AccountListPanel employees={activeEmployees} onMove={onMoveEmployee} onArchive={id => onSetEmployeeArchived(id, true)} busy={busy} />
+      <ArchivedEmployeesPanel employees={archivedEmployees} onRestore={id => onSetEmployeeArchived(id, false)} busy={busy} />
     </>
   );
 
@@ -2782,7 +2832,7 @@ function DeclarationPanel({ employees, salary, punches, multiplier, overrides, d
 
   const generateFixed = () => {
     // 已固定：直接顯示同一份，不重算
-    if (existing && existing.emps) { printDeclarationSnapshot(existing, year, month); return; }
+    if (existing && existing.emps) { printDeclarationSnapshot(visibleDeclarationSnapshot(existing, employees), year, month); return; }
     const snap = buildDeclarationSnapshot(employees, salary, punches, year, month, multiplier, overrides);
     onSaveDeclaration(ym, snap);
     printDeclarationSnapshot(snap, year, month);
@@ -3035,8 +3085,9 @@ function PendingApprovalPanel({ pending, onReview, busy }) {
 
 // 管理員專用：查看員工帳號（姓名）與密碼（手機號碼），供員工忘記密碼時查詢。
 // 密碼屬敏感資訊，預設以圓點遮蔽，點眼睛才顯示。
-function AccountListPanel({ employees, onMove }) {
+function AccountListPanel({ employees, onMove, onArchive, busy }) {
   const [show, setShow] = useState(false);
+  const [confirmId, setConfirmId] = useState("");
   if (!employees.length) return null;
   return (
     <div style={{
@@ -3065,7 +3116,7 @@ function AccountListPanel({ employees, onMove }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {employees.map((e, i) => (
           <div key={e.id} style={{
-            display: "flex", alignItems: "center", justifyContent: "space-between",
+            display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 6,
             background: COLORS.panelRaised, border: `1px solid ${COLORS.border}`,
             borderRadius: 8, padding: "8px 10px",
           }}>
@@ -3082,7 +3133,7 @@ function AccountListPanel({ employees, onMove }) {
                 <button
                   type="button"
                   onClick={() => onMove(e.id, -1)}
-                  disabled={i === 0}
+                  disabled={busy || i === 0}
                   aria-label="上移"
                   title="上移"
                   style={{
@@ -3097,7 +3148,7 @@ function AccountListPanel({ employees, onMove }) {
                 <button
                   type="button"
                   onClick={() => onMove(e.id, 1)}
-                  disabled={i === employees.length - 1}
+                  disabled={busy || i === employees.length - 1}
                   aria-label="下移"
                   title="下移"
                   style={{
@@ -3111,11 +3162,48 @@ function AccountListPanel({ employees, onMove }) {
                 </button>
               </span>
             )}
+            {onArchive && <button type="button" disabled={busy} aria-label={`封存 ${e.name}`}
+              onClick={() => setConfirmId(e.id)} style={{ minHeight: 36, padding: "6px 9px", borderRadius: 6,
+                border: `1px solid ${COLORS.border}`, background: COLORS.panel, color: COLORS.textMuted, fontSize: 12, cursor: "pointer" }}>封存</button>}
+            {confirmId === e.id && <div role="group" aria-label={`封存確認 ${e.name}`} style={{ width: "100%", fontSize: 12, lineHeight: 1.8, color: COLORS.textMuted, paddingTop: 6 }}>
+              <div>封存「{e.name}」後將停用帳號，並從考勤、薪資、名單及報表隱藏。歷史資料保留，可在封存管理還原。</div>
+              <button type="button" disabled={busy} onClick={async () => { if (await onArchive(e.id)) setConfirmId(""); }}
+                style={{ minHeight: 44, marginTop: 8, padding: "8px 14px", border: "none", borderRadius: 6, background: COLORS.brass, color: COLORS.bg }}>確認封存</button>
+              <button type="button" disabled={busy} onClick={() => setConfirmId("")}
+                style={{ minHeight: 44, marginLeft: 8, padding: "8px 14px", borderRadius: 6, border: `1px solid ${COLORS.border}`, background: "none", color: COLORS.textMuted }}>取消</button>
+            </div>}
           </div>
         ))}
       </div>
     </div>
   );
+}
+
+function ArchivedEmployeesPanel({ employees, onRestore, busy }) {
+  const [open, setOpen] = useState(false);
+  const [confirmId, setConfirmId] = useState("");
+  return <div style={{ marginBottom: 14, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12 }}>
+    <button type="button" aria-expanded={open} onClick={() => setOpen(v => !v)}
+      style={{ width: "100%", minHeight: 44, textAlign: "left", border: "none", background: "none", color: COLORS.textMuted, fontSize: 13 }}>
+      {open ? "▾" : "▸"} 封存管理（{employees.length}）
+    </button>
+    {open && <div style={{ fontSize: 12, color: COLORS.textMuted, lineHeight: 1.8 }}>
+      {!employees.length ? "目前沒有封存員工" : employees.map(e => <div key={e.id} style={{ padding: "10px 0", borderTop: `1px solid ${COLORS.border}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+          <span>{e.name}</span>
+          <button type="button" disabled={busy} aria-label={`還原 ${e.name}`} onClick={() => setConfirmId(e.id)}
+            style={{ minHeight: 44, border: `1px solid ${COLORS.border}`, borderRadius: 6, background: "none", color: COLORS.brass, padding: "8px 12px" }}>還原</button>
+        </div>
+        {confirmId === e.id && <div>
+          還原後帳號可重新登入，原有考勤與薪資會回到一般頁面。
+          <div><button type="button" disabled={busy} onClick={async () => { if (await onRestore(e.id)) setConfirmId(""); }}
+            style={{ minHeight: 44, background: COLORS.brass, border: "none", borderRadius: 6, padding: "8px 12px", marginTop: 8 }}>確認還原</button>
+          <button type="button" disabled={busy} onClick={() => setConfirmId("")}
+            style={{ minHeight: 44, border: "none", background: "none", color: COLORS.textMuted, marginLeft: 8 }}>取消</button></div>
+        </div>}
+      </div>)}
+    </div>}
+  </div>;
 }
 
 // 管理員設定：是否開放員工查看「上個月」薪資（預設關閉）。後端也會檢查這個開關，不只是前端隱藏分頁。
