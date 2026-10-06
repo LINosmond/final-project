@@ -4,7 +4,8 @@ import { resolveHoliday } from "./holidays.js";
 
 export const DEFAULT_RULES = {
   timezone: "Asia/Taipei",
-  slotMinutes: 30,              // 打卡時間以幾分鐘為單位（整點／半點 = 30）
+  punchMode: "slot",            // "slot"：員工選整點／半點；"exact"：直接記錄按下的時間
+  slotMinutes: 30,              // slot 模式的時間單位（整點／半點 = 30）
   standardDailyMinutes: 480,    // 一天正常工時，超過算加班
   maxShiftMinutes: 16 * 60,     // 上班後超過這麼久沒下班，視為漏打卡，不自動配對
   otMode: "tiers",              // "tiers"：依勞基法分段倍率；"simple"：單一倍率（舊版相容）
@@ -20,6 +21,7 @@ export const DEFAULT_RULES = {
 export function normalizeRules(input) {
   const r = { ...DEFAULT_RULES, ...(input || {}) };
   const num = (v, fb, min = 0) => (Number.isFinite(Number(v)) && Number(v) >= min ? Number(v) : fb);
+  r.punchMode = r.punchMode === "exact" ? "exact" : "slot";
   r.slotMinutes = [5, 10, 15, 30, 60].includes(Number(r.slotMinutes)) ? Number(r.slotMinutes) : 30;
   r.standardDailyMinutes = num(r.standardDailyMinutes, 480, 0);
   r.maxShiftMinutes = num(r.maxShiftMinutes, 16 * 60, 60);

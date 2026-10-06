@@ -5,6 +5,8 @@ import { normalizeRules, monthAttendance, pairSessions, monthFetchKeys } from ".
 import { normalizeProfile, effectiveRecord, computePay } from "../shared/salary.js";
 import { dayRange, zonedToTs, parseDateKey, parseYm, addDays, parseHM, localParts, dateKeyOf } from "../shared/time.js";
 import { normalizeOverrideKind } from "../shared/holidays.js";
+import { distanceMeters } from "../shared/geo.js";
+export { distanceMeters };
 
 // ---------- 公司 ----------
 export function companySettings(row) {
@@ -109,12 +111,6 @@ export function employeeState(db, employee, company, nowTs = now()) {
   };
 }
 
-export function distanceMeters(lat1, lon1, lat2, lon2) {
-  const R = 6371000, toRad = (d) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
 
 const PUNCH_WINDOW_MS = 45 * 60 * 1000;
 

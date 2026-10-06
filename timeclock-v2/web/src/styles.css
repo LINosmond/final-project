@@ -105,3 +105,21 @@ h1, h2, h3 { margin: 0; font-weight: 600; }
   .card { border: 1px solid #999; break-inside: avoid; }
   .shell { padding: 0; max-width: none; }
 }
+
+/* 打卡頁新增元素 */
+.banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; border: 1px solid var(--border); background: var(--panel); }
+.banner.warn { border-color: rgba(216,178,90,0.5); background: var(--brass-soft); color: var(--brass); }
+.banner.done { justify-content: flex-start; animation: pop 0.25s ease-out; }
+.banner.done.in { border-color: rgba(216,178,90,0.5); background: var(--brass-soft); }
+.banner.done.out { border-color: rgba(111,191,142,0.5); background: var(--green-soft); }
+.banner .check { font-size: 26px; font-weight: 700; line-height: 1; }
+.banner.done.in .check { color: var(--brass); } .banner.done.out .check { color: var(--green); }
+@keyframes pop { from { transform: scale(0.96); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.geo { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); padding: 8px 12px; border-radius: 10px; border: 1px dashed var(--border); margin-bottom: 4px; }
+.geo span:nth-child(2) { flex: 1; }
+.geo.ok { color: var(--green); border-color: rgba(111,191,142,0.4); }
+.geo.bad { color: var(--red); border-color: rgba(224,121,106,0.4); }
+.slot { position: relative; }
+.slot-hint { position: absolute; top: 6px; right: 8px; font-size: 10px; font-family: var(--sans); font-weight: 500; color: var(--faint); letter-spacing: 1px; }
+.slot.sel .slot-hint { color: inherit; opacity: 0.8; }
+.punch-btn:disabled { opacity: 0.45; }

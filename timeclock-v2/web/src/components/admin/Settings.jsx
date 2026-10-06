@@ -72,7 +72,10 @@ export default function Settings({ me, refreshMe, reloadEmployees, flash }) {
       <div className="card">
         <h2>工時與加班規則</h2>
         <div className="grid-2">
-          <Field label="打卡時間單位（分）"><select className="input" value={r.slotMinutes} onChange={(e) => setRule("slotMinutes", Number(e.target.value))}>{[5, 10, 15, 30, 60].map((v) => <option key={v} value={v}>{v}</option>)}</select></Field>
+          <Field label="打卡方式" help={r.punchMode === "exact" ? "一顆按鈕，直接記錄按下的時間" : "員工從前後兩個時間格選一個，同時記錄實際按下時間供管理員比對"}>
+            <select className="input" value={r.punchMode} onChange={(e) => setRule("punchMode", e.target.value)}><option value="slot">選整點／半點（預設）</option><option value="exact">記錄實際時間</option></select>
+          </Field>
+          {r.punchMode !== "exact" && <Field label="打卡時間單位（分）"><select className="input" value={r.slotMinutes} onChange={(e) => setRule("slotMinutes", Number(e.target.value))}>{[5, 10, 15, 30, 60].map((v) => <option key={v} value={v}>{v}</option>)}</select></Field>}
           <Field label="每日正常工時（分）" help="超過即為加班，480 = 8 小時"><input className="input mono" inputMode="numeric" value={r.standardDailyMinutes} onChange={(e) => setRule("standardDailyMinutes", Number(e.target.value))} /></Field>
           <Field label="加班計算方式">
             <select className="input" value={r.otMode} onChange={(e) => setRule("otMode", e.target.value)}><option value="tiers">分段倍率（前 2 小時 1.34、再 2 小時 1.67、其後 2）</option><option value="simple">單一倍率</option></select>
