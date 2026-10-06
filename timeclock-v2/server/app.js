@@ -49,16 +49,18 @@ export function createApp({ db, staticDir = null, trustProxy = false, logger = c
       if (req.method !== "GET" && req.method !== "HEAD") { res.writeHead(405); res.end(); return; }
       return serveStatic(req, res, url.pathname);
     }
+    if (url.pathname === "/api/health") return sendJson(res, 200, { ok: true, uptime: Math.round(process.uptime()) });
     const matched = router.match(req.method, url.pathname);
     if (!matched) return sendJson(res, 404, { error: "not_found", message: "找不到這個 API" });
     if (matched.methodNotAllowed) return sendJson(res, 405, { error: "method_not_allowed" });
 
     // 同站 cookie 之外再擋一次跨站寫入：有 Origin 的非 GET 請求必須與 Host 同源
     if (req.method !== "GET" && req.headers.origin) {
-      const host = (trustProxy && req.headers["x-forwarded-host"]) || req.headers.host;
+      // 反向代理後 Host 可能是內部位址，所以 X-Forwarded-Host 與 Host 兩者任一相符即可
+      const allowed = new Set([req.headers.host, trustProxy ? String(req.headers["x-forwarded-host"] || "").split(",")[0].trim() : ""].filter(Boolean));
       let originHost = null;
       try { originHost = new URL(req.headers.origin).host; } catch {}
-      if (!host || originHost !== host) return sendJson(res, 403, { error: "bad_origin", message: "來源不被允許" });
+      if (!originHost || !allowed.has(originHost)) return sendJson(res, 403, { error: "bad_origin", message: "來源不被允許" });
     }
 
     const cookies = parseCookies(req.headers.cookie);

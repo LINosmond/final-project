@@ -44,6 +44,35 @@ npm start            # http://localhost:3000
 
 開發時前後端分開跑：`npm run dev`（後端，含自動重啟）與 `npm run dev:web`（Vite，/api 自動代理到 3000）。
 
+## 部署到 Railway（建議，最省事）
+
+Railway 會用本目錄的 `Dockerfile` 建置，所以 Node 版本不會出錯。整個流程大約十分鐘：
+
+1. 到 https://railway.com 用 GitHub 登入，**New Project → Deploy from GitHub repo**，選這個 repo（第一次要授權 Railway 讀取 repo）。
+2. 進到建立好的 Service → **Settings**：
+   - **Source → Root Directory** 填 `timeclock-v2`（很重要，repo 裡還有其他專案）。
+   - **Source → Branch** 選要部署的分支（例如 `master` 或 `claude/timeclock-v2`）。
+3. **Variables** 新增：
+   - `DATA_DIR` = `/data`
+   - `TRUST_PROXY` = `1`
+   - `PORT` 不用設，Railway 會自己給。
+4. **Settings → Volumes → Add Volume**，Mount Path 填 `/data`。**沒有這步，每次重新部署資料會消失。**
+5. **Settings → Networking → Generate Domain**，會得到一個 `xxx.up.railway.app` 的 HTTPS 網址。要用自己的網域就在同一處加 Custom Domain，照指示到 DNS 加一筆 CNAME。
+6. 等部署完成（Deployments 分頁變綠），打開網址會看到「初始設定」頁，填公司名稱、公司代碼、管理員帳密即可開始用。
+
+之後每次推送到那個分支，Railway 會自動重新建置部署；資料在 Volume 裡不受影響。
+
+**費用**：Hobby 方案每月 5 美元（內含 5 美元用量）。這套程式閒置時幾乎不耗資源，一般一到數十家店都在這個額度內；Volume 另依 GB 計費，打卡資料一年也用不到 0.1 GB。
+
+**備份**：管理員後台「設定 → 下載完整備份」可隨時匯出 JSON；Railway 的 Volume 設定頁也有備份功能，建議開啟。
+
+**搬舊資料**：部署好之後在後台「設定 → 匯入舊版備份檔」上傳舊版匯出的 JSON，見下方「從舊版搬資料」。
+
+**在 Railway 上新增第二家公司**：Service 頁面右上角可開 **Shell**（或用 Railway CLI 的 `railway run`），執行
+`node scripts/create-company.mjs --name "第二家店" --code shop2 --admin-login 0912345678 --admin-password 密碼`。
+
+同一個 `Dockerfile` 也能直接用在 Fly.io、Render、任何支援 Docker 的主機，只要把持久磁碟掛到 `/data`。
+
 ## 部署到自己的主機
 
 1. 安裝 Node.js 22（建議 LTS 最新版）。

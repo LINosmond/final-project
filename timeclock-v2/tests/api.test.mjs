@@ -274,6 +274,12 @@ test("匯入舊版備份：員工、打卡、假日、倍率；重複匯入不�
   assert.equal(backup.data.employees.some((e) => e.legacyId === "L1"), true);
 });
 
+test("健康檢查不需登入", async () => {
+  const r = await srv.client().get("/api/health");
+  assert.equal(r.status, 200);
+  assert.equal(r.data.ok, true);
+});
+
 test("跨站請求：帶了不同 Origin 的寫入被擋", async () => {
   const c = srv.client();
   const res = await c.raw("POST", "/api/auth/login", { companyCode: "shop", login: "0911000000", password: "admin123" }, { Origin: "https://evil.example" });
