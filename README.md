@@ -1,10 +1,11 @@
 # final-project
 
-三個各自獨立的專案，分資料夾放。要弄哪個就進哪個資料夾，互不影響。
+幾個各自獨立的專案，分資料夾放。要弄哪個就進哪個資料夾，互不影響。
 
 | 資料夾 | 內容 |
 |--------|------|
 | [`TimeClockWeb/`](TimeClockWeb/) | 員工打卡系統（React 靜態網站，資料庫用 Google 試算表） |
+| [`timeclock-v2/`](timeclock-v2/) | 打卡系統重製版：Node + SQLite 自架後端、多公司、真正的登入權限、逐筆打卡與單日補登、可匯入舊版備份 |
 | [`stock-data-analysis/`](stock-data-analysis/) | 股票資料分析 Jupyter notebooks + 資料檔（xlsx） |
 | [`launcher/`](launcher/) | 一鍵啟動器：雙擊開啟自訂清單中的程式／網址／檔案（Windows） |
 | [`game-trade-bot/`](game-trade-bot/) | 遊戲交易自動精靈：自動偵測背包綠球並搬到交易視窗（滑鼠自動化，Windows） |

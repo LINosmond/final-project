@@ -1,0 +1,24 @@
+{
+  "name": "timeclock-v2",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "dev": "node --disable-warning=ExperimentalWarning --watch server/index.js",
+    "dev:web": "vite --config web/vite.config.js",
+    "build": "vite build --config web/vite.config.js",
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
+    "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.mjs",
+    "create-company": "node --disable-warning=ExperimentalWarning scripts/create-company.mjs",
+    "import-legacy": "node --disable-warning=ExperimentalWarning scripts/import-legacy.mjs"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11"
+  }
+}

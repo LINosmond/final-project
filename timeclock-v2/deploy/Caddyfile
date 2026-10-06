@@ -1,0 +1,6 @@
+# Caddy 反向代理範例（自動申請 HTTPS 憑證）。打卡定位功能需要 HTTPS。
+# 把 clock.example.com 換成你的網域，DNS 指到這台主機後執行：sudo systemctl reload caddy
+clock.example.com {
+    reverse_proxy 127.0.0.1:3000
+    encode gzip
+}

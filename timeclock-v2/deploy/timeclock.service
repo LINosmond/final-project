@@ -1,0 +1,20 @@
+# systemd 服務範例。放到 /etc/systemd/system/timeclock.service 後：
+#   sudo systemctl daemon-reload && sudo systemctl enable --now timeclock
+[Unit]
+Description=TimeClock v2
+After=network.target
+
+[Service]
+Type=simple
+User=timeclock
+WorkingDirectory=/opt/timeclock-v2
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=DATA_DIR=/var/lib/timeclock
+Environment=TRUST_PROXY=1
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning server/index.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
