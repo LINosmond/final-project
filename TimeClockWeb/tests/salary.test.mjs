@@ -167,3 +167,18 @@ test('申報：月薪人員固定月休 8 天、連續上班不超過 6 天，�
   assert.equal(r.rec.dutyAllowance, 5000);
   assert.equal(r.days.find(d => d.day === 21).in, '08:00'); // 有真實打卡的日子用真實時間
 });
+
+test('匯出指定人員／月份：只讀已固定快照，人員×月份成欄，未固定顯示未產生', async () => {
+  const { printDeclarationSelection } = await import(pathToFileURL(generated));
+  let html = '';
+  global.document = { createElement: () => ({ style: {}, append() {}, remove() {}, set srcdoc(v) { html = v; } }), body: { style: {}, appendChild() {} } };
+  const rec = { position: '', workHours: 160, hourlyRate: 196, carWash: 700, laborIns: 758, healthIns: 470 };
+  const declaration = { '2026-07': { emps: { a: { name: '甲', rec } } }, '2026-08': { emps: { a: { name: '甲', rec: { ...rec, workHours: 150 } } } } };
+  const before = JSON.stringify(declaration);
+  printDeclarationSelection(declaration, [{ id: 'a', name: '甲' }], 2026, [7, 8, 9]);
+  assert.equal(JSON.stringify(declaration), before);
+  assert.match(html, /<th>月份<\/th><td>7 月<\/td><td>8 月<\/td><td>9 月<\/td>/);
+  assert.match(html, /<th>工作時數<\/th><td>160<\/td><td>150<\/td>/);
+  assert.match(html, /未產生/);
+  assert.match(html, /A4 landscape/);
+});

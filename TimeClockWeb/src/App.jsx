@@ -2819,6 +2819,118 @@ function LocationPanel({ companyLocation, onSave, onClear, busy }) {
 // 申報薪資表：以當月真實打卡為基礎、刪掉部分打卡天數使實發落在 30500~34000。
 // 第一次按會「產生並固定」（存到後台），之後按只會顯示同一份；要重算請按「再次調整」。
 // 完全不更動真實打卡/薪資資料（申報快照存在獨立的 declaration 資料）。
+// 匯出「已固定」的申報薪資：指定人員×指定月份，只讀現有快照、不重新產生（不會覆蓋任何固定結果）。
+// 版面比照紙本總表：欄位由上往下，每位員工每個月一欄，A4 橫印。
+function printDeclarationSelection(declaration, people, year, months) {
+  const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const cols = [];
+  people.forEach((p) => months.forEach((m) => {
+    const snap = (declaration || {})[`${year}-${pad2(m)}`];
+    const r = snap && snap.emps ? snap.emps[p.id] : null;
+    cols.push({ name: p.name, month: m, rec: r ? r.rec : null });
+  }));
+  const fields = [
+    ["序號", (c, i) => i + 1],
+    ["月份", (c) => `${c.month} 月`],
+    ["職務", (c) => (c.rec ? (c.rec.position === "站長" ? "月薪" : (c.rec.position || "")) : "")],
+    ["姓名", (c) => c.name],
+    ["工作時數", (c) => c.rec && salNum(c.rec.workHours)],
+    ["時薪單價", (c) => c.rec && salNum(c.rec.hourlyRate)],
+    ["加班時數", (c) => c.rec && salNum(c.rec.otHours)],
+    ["加班時薪", (c) => c.rec && salNum(c.rec.otRate)],
+    ["洗車獎金", (c) => c.rec && salNum(c.rec.carWash)],
+    ["職務加級", (c) => c.rec && salNum(c.rec.dutyAllowance)],
+    ["特別獎金", (c) => c.rec && salNum(c.rec.specialBonus)],
+    ["應發金額", (c) => c.rec && salaryCalc(c.rec).gross, "hl"],
+    ["勞保", (c) => c.rec && salNum(c.rec.laborIns)],
+    ["健保", (c) => c.rec && salNum(c.rec.healthIns)],
+    ["借支", (c) => c.rec && salNum(c.rec.advance)],
+    ["實發(未進位)", (c) => c.rec && salaryCalc(c.rec).net],
+    ["簽章", () => "", "sign"],
+    ["實發金額", (c) => (c.rec ? salaryCalc(c.rec).netRounded : "未產生"), "hl"],
+  ];
+  const body = fields.map(([label, get, cls]) => `<tr class="${cls || ""}"><th>${esc(label)}</th>${cols.map((c, i) => {
+    const v = get(c, i);
+    return `<td>${v === "" || v == null || v === false ? "&nbsp;" : esc(v === 0 ? "" : v)}</td>`;
+  }).join("")}</tr>`).join("");
+  const range = months.length ? `${months[0]}${months.length > 1 ? `～${months[months.length - 1]}` : ""} 月` : "";
+  const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>${year}年${range}申報薪資</title>
+<style>
+@page { size: A4 landscape; margin: 8mm; }
+* { box-sizing: border-box; }
+body { font-family:"Microsoft JhengHei","PingFang TC","Heiti TC",sans-serif; color:#111; margin:0; font-weight:bold; }
+.page { width: 279mm; margin: 0 auto; }
+.fit { transform-origin: top center; }
+h1 { font-size:18px; text-align:center; margin:2px 0 8px; }
+table { border-collapse:collapse; width:100%; font-size:14px; }
+th, td { border:1.5px solid #222; padding:5px 4px; text-align:center; }
+th { background:#e6e6e6; white-space:nowrap; width:100px; }
+tr.hl th, tr.hl td { background:#f3f3f3; }
+tr.sign td, tr.sign th { height:56px; }
+.foot { text-align:right; margin-top:6px; font-size:13px; }
+</style></head><body>
+<div class="page"><div class="fit">
+<h1>${year} 年 ${range}　申報薪資</h1>
+<table>${body}</table>
+<div class="foot">日期：民國 ${year - 1911} 年 ${range}</div>
+</div></div>
+<script>
+function fitPages(){var T=680,l=document.querySelectorAll('.fit');for(var i=0;i<l.length;i++){var h=l[i].offsetHeight,w=l[i].scrollWidth,pw=l[i].parentNode.clientWidth;var s=Math.min(1,T/h,pw/w);if(s<1)l[i].style.zoom=s;}}
+window.onload=function(){setTimeout(fitPages,300);};
+</script></body></html>`;
+  showReportOverlay(html);
+}
+
+// 匯出指定人員、指定月份的已固定申報薪資（只讀，不重新產生）
+function DeclarationExport({ employees, declaration, defaultYear }) {
+  const [open, setOpen] = useState(false);
+  const [year, setYear] = useState(defaultYear);
+  const [months, setMonths] = useState([]);
+  const [ids, setIds] = useState([]);
+  const toggle = (list, setList, v) => setList(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+  const fixed = (m) => !!((declaration || {})[`${year}-${pad2(m)}`] || {}).emps;
+  const chip = (on) => ({ padding: "6px 10px", borderRadius: 7, fontSize: 12, cursor: "pointer", border: `1px solid ${on ? COLORS.brass : COLORS.border}`, background: on ? COLORS.brassSoft : "none", color: on ? COLORS.brass : COLORS.textMuted });
+  const ready = months.length && ids.length;
+  const run = () => {
+    const people = employees.filter((e) => ids.includes(e.id));
+    const ms = [...months].sort((a, b) => a - b);
+    printDeclarationSelection(declaration, people, year, ms);
+  };
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} style={{ width: "100%", marginTop: 8, padding: "10px 0", borderRadius: 8, border: `1px solid ${COLORS.border}`, background: "none", color: COLORS.textMuted, fontSize: 13, cursor: "pointer" }}>
+        📄 匯出指定人員／月份（不重新產生）
+      </button>
+    );
+  }
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${COLORS.border}` }}>
+      <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 6 }}>匯出已固定的申報薪資（只讀取，不會重新產生或覆蓋）</div>
+      <select value={year} onChange={(e) => setYear(Number(e.target.value))} style={{ padding: "6px 8px", borderRadius: 7, background: COLORS.panelRaised, color: COLORS.text, border: `1px solid ${COLORS.border}`, marginBottom: 8 }}>
+        {[defaultYear - 1, defaultYear, defaultYear + 1].map((y) => <option key={y} value={y}>{y}</option>)}
+      </select>
+      <div style={{ fontSize: 11, color: COLORS.textFaint, margin: "2px 0 4px" }}>月份（✓＝已固定）</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+        {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+          <button key={m} type="button" onClick={() => toggle(months, setMonths, m)} style={chip(months.includes(m))}>{m}月{fixed(m) ? "✓" : ""}</button>
+        ))}
+      </div>
+      <div style={{ fontSize: 11, color: COLORS.textFaint, margin: "2px 0 4px" }}>人員</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+        {employees.map((e) => (
+          <button key={e.id} type="button" onClick={() => toggle(ids, setIds, e.id)} style={chip(ids.includes(e.id))}>{e.name}</button>
+        ))}
+      </div>
+      <button disabled={!ready} onClick={run} style={{ width: "100%", padding: "10px 0", borderRadius: 8, border: "none", background: ready ? COLORS.brass : COLORS.border, color: "#20160b", fontSize: 14, fontWeight: 700, cursor: ready ? "pointer" : "default" }}>
+        🖨 匯出所選（可存成 PDF）
+      </button>
+      <div style={{ fontSize: 11, color: COLORS.textFaint, marginTop: 6, lineHeight: 1.5 }}>
+        未固定的月份會顯示「未產生」。存 PDF：按列印後在 iPhone 列印預覽用兩指放大，再點分享 →「儲存到檔案」。
+      </div>
+    </div>
+  );
+}
+
 function DeclarationPanel({ employees, salary, punches, multiplier, overrides, declaration, onSaveDeclaration }) {
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
@@ -2881,6 +2993,8 @@ function DeclarationPanel({ employees, salary, punches, multiplier, overrides, d
       >
         🔄 再次調整當月申報表格
       </button>
+
+      <DeclarationExport employees={employees} declaration={declaration} defaultYear={year} />
     </div>
   );
 }
@@ -3351,4 +3465,4 @@ function tdStyle(isDay) {
 }
 
 // 共用計算與流程測試入口。
-export { SalaryPanel, salaryEffectiveRecord, salaryHoursOf, salaryCalc, computeMonthRows, buildMonthlySchedule, buildDeclarationSnapshot };
+export { SalaryPanel, salaryEffectiveRecord, salaryHoursOf, salaryCalc, computeMonthRows, buildMonthlySchedule, buildDeclarationSnapshot, printDeclarationSelection };
