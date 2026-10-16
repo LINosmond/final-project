@@ -61,6 +61,28 @@ function halfHourOptions(date) {
   return prev === next ? [toObj(prev)] : [toObj(prev), toObj(next)];
 }
 
+// 上班打卡選「前一個半點」的寬限：現在時間減前一個半點不可超過 6 分鐘（6 分整可、6 分 1 秒不可）
+export const CLOCK_IN_EARLIER_GRACE_MS = 6 * 60 * 1000;
+const LAST_SLOT_MINUTES = 24 * 60 - 30; // 23:30，halfHourOptions 最晚只給到這一格
+
+// 判斷在 nowDate 這個時間點能不能選 slotMinutes（當天第幾分鐘）這個半點來打卡
+// - 下班打卡（type !== "in"）不限制
+// - 選的是現在或之後的半點，一律可以
+// - 選的是之前的半點：距離現在 ≤ 6 分鐘才可以
+// - 例外：23:30 之後只剩 23:30 一個選項（沒有更晚的半點可選），維持原本行為，避免整晚無法上班打卡
+export function canPickEarlierSlot(type, nowDate, slotMinutes) {
+  if (type !== "in") return true;
+  const d = new Date(nowDate);
+  const nowMs = ((d.getHours() * 60 + d.getMinutes()) * 60 + d.getSeconds()) * 1000 + d.getMilliseconds();
+  let diffMs = nowMs - slotMinutes * 60000;
+  // 「後一個半點」最多只在 30 分鐘後；比這更晚的半點視為前一天（跨午夜、畫面停留太久的情況）
+  if (diffMs < -30 * 60000) diffMs += 24 * 60 * 60000;
+  if (diffMs <= 0) return true;
+  if (diffMs <= CLOCK_IN_EARLIER_GRACE_MS) return true;
+  if (slotMinutes === LAST_SLOT_MINUTES && diffMs < 30 * 60000) return true;
+  return false;
+}
+
 // 管理員補登／修改時間：全天所有半點時刻（00:00, 00:30, ... 23:30）
 const HALF_HOUR_SLOTS = Array.from({ length: 48 }, (_, i) => {
   const h = Math.floor(i / 2);
@@ -1037,6 +1059,11 @@ export default function TimeClockApp() {
   const doPunch = async (chosenMinutes) => {
     if (!sessionEmp || !punches || !nextAction) return;
     const type = nextAction;
+    // 用按下打卡當下的時間重新檢查（畫面可能停留太久，now state 已過時）
+    if (!canPickEarlierSlot(type, new Date(Date.now()), chosenMinutes)) {
+      flash("上班超過 6 分鐘不能選前一個時間，請改選下一個時間", "error");
+      return;
+    }
     const d = new Date(now);
     d.setHours(Math.floor(chosenMinutes / 60), chosenMinutes % 60, 0, 0);
 
@@ -1312,6 +1339,13 @@ export default function TimeClockApp() {
 function PunchView({ now, sessionEmp, nextAction, sessionCounts, doPunch, busy, todayPunches, locationRestricted }) {
   const [selected, setSelected] = useState(null);
   const options = halfHourOptions(now);
+  // 上班打卡：超過 6 分鐘的前一個半點停用（下班不限制）
+  const isAllowed = (m) => canPickEarlierSlot(nextAction, now, m);
+  const hasBlocked = options.some((opt) => !isAllowed(opt.minutes));
+  // 已選的時間在等待中變成不可選時，取消選取
+  useEffect(() => {
+    if (selected != null && !canPickEarlierSlot(nextAction, now, selected)) setSelected(null);
+  }, [selected, nextAction, now]);
   const isOutNext = nextAction === "out";
   const done = nextAction === null;
   const actionLabel = isOutNext ? "下班打卡" : "上班打卡";
@@ -1376,23 +1410,25 @@ function PunchView({ now, sessionEmp, nextAction, sessionCounts, doPunch, busy, 
           <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
             {options.map((opt) => {
               const isSel = selected === opt.minutes;
+              const blocked = !isAllowed(opt.minutes);
               return (
                 <button
                   key={opt.minutes}
                   onClick={() => setSelected(opt.minutes)}
-                  disabled={busy}
+                  disabled={busy || blocked}
                   style={{
                     flex: 1,
                     padding: "18px 0",
                     borderRadius: 14,
                     border: `2px solid ${isSel ? accentBorder : COLORS.border}`,
                     background: isSel ? accentSoft : COLORS.panel,
-                    color: isSel ? accentColor : COLORS.textMuted,
+                    color: isSel ? accentColor : (blocked ? COLORS.textFaint : COLORS.textMuted),
                     fontFamily: "'Space Mono', monospace",
                     fontSize: 22,
                     fontWeight: 700,
-                    cursor: busy ? "default" : "pointer",
-                    opacity: busy ? 0.6 : 1,
+                    cursor: busy || blocked ? "default" : "pointer",
+                    opacity: blocked ? 0.35 : (busy ? 0.6 : 1),
+                    textDecoration: blocked ? "line-through" : "none",
                   }}
                 >
                   {pad2(opt.h)}:{pad2(opt.m)}
@@ -1400,6 +1436,11 @@ function PunchView({ now, sessionEmp, nextAction, sessionCounts, doPunch, busy, 
               );
             })}
           </div>
+          {hasBlocked && (
+            <div style={{ fontSize: 11, color: COLORS.textFaint, marginTop: -6, marginBottom: 12 }}>
+              上班超過 6 分鐘不能選前一個時間
+            </div>
+          )}
 
           <button
             onClick={confirm}
