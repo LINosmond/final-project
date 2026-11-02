@@ -424,6 +424,7 @@ export default function TimeClockApp() {
   const [sessionId, setSessionId] = useState("");
   const [sessionType, setSessionType] = useState(""); // "employee" | "admin"
   const [sessionChecked, setSessionChecked] = useState(false);
+  const [adminExpiredFlag, setAdminExpiredFlag] = useState(false);
   const [sessionPw, setSessionPw] = useState(""); // 員工登入時的手機號碼（僅存在本機，查自己薪資時由後端驗證身分用）
   const [salaryVisible, setSalaryVisible] = useState(false); // 管理員是否開放員工查看上個月薪資
   const salaryVisiblePending = useRef(0);
@@ -644,6 +645,7 @@ export default function TimeClockApp() {
           }
         }
       } catch (err) {
+        if (err && err.code === "ADMIN_EXPIRED") { setAdminExpiredFlag(true); return; }
         if (mounted.current && currentScope.current === syncScope) {
           // 附上實際錯誤原因，方便判斷是網路、逾時還是後端錯誤
           const detail = err && err.message ? `（原因：${String(err.message).slice(0, 160)}）` : "";
@@ -795,7 +797,8 @@ export default function TimeClockApp() {
       if (salaryVisible) publishLastMonthSalary(next).catch(() => {}); // 已開放時，同步更新員工可見的明細
     } catch (e) {
       salaryPending.current = null; // 寫入失敗，恢復接受伺服器資料
-      flash("薪資儲存失敗，請稍後再試", "error");
+      if (/forbidden/i.test(e && e.message)) { adminExpired(); return; }
+      flash(`薪資儲存失敗，請稍後再試（原因：${String((e && e.message) || "未知").slice(0, 80)}）`, "error");
     }
   };
 
@@ -963,6 +966,18 @@ export default function TimeClockApp() {
       if (mounted.current && currentScope.current === scope) setBusy(false);
     }
   };
+
+  // 管理員憑證過期／失效：直接登出並提示重新登入（避免讀到空薪資、存檔又失敗卻看不出原因）
+  const adminExpired = () => setAdminExpiredFlag(true);
+  useEffect(() => {
+    if (!adminExpiredFlag) return;
+    setAdminExpiredFlag(false);
+    (async () => {
+      await handleLogout();
+      flash("管理員登入已過期，請重新登入", "error");
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminExpiredFlag]);
 
   const handleLogout = async () => {
     currentScope.current = ":";

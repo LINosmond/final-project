@@ -160,6 +160,10 @@ const storage = {
   // 回傳格式為 { key: 原始字串或 null }。
   async getAll(keys) {
     const data = await callApi("getAll", { keys });
+    // 帶著管理員憑證卻被後端判定不是管理員＝憑證已過期或失效
+    if (adminToken && data.admin === false) {
+      throw apiError("管理員登入已過期，請重新登入。", "ADMIN_EXPIRED");
+    }
     const values = data.values;
     if (!values || typeof values !== "object" || Array.isArray(values) || keys.some((key) =>
       !Object.prototype.hasOwnProperty.call(values, key) || (values[key] !== null && typeof values[key] !== "string")
