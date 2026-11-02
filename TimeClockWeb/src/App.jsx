@@ -1112,7 +1112,9 @@ export default function TimeClockApp() {
       setPunches(freshPunches);
       flash(`${sessionEmp.name} ${type === "in" ? "上班" : "下班"}打卡成功 · 記錄為 ${fmtHM(d)}`);
     } catch (e) {
-      flash("打卡儲存失敗，請稍後再試", "error");
+      // 後端也會擋「上班超過 6 分鐘選前一個半點」（例如手機時間不準時）
+      if (e && e.message === "clock-in too late") flash("上班超過 6 分鐘不能選前一個時間，請改選下一個時間", "error");
+      else flash("打卡儲存失敗，請稍後再試", "error");
     }
     setBusy(false);
   };
