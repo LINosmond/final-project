@@ -140,3 +140,16 @@ test('管理員憑證：別人猜錯密碼不影響已登入者；假憑證與�
   b.call({ action: 'adminLogout', adminToken: tok });
   assert.equal(b.call({ action: 'getAll', keys: ['salary'], adminToken: tok }).values.salary, null);
 });
+
+test('管理員憑證：使用中自動延長；過期後 getAll 回報 admin=false', () => {
+  const b = seeded();
+  const tok = b.call({ action: 'adminLogin', ...A }).token;
+  const key = 'admintok:' + tok;
+  b.props[key] = String(Date.now() + 2 * 24 * 60 * 60 * 1000); // 只剩 2 天
+  assert.equal(b.call({ action: 'getAll', keys: ['salary'], adminToken: tok }).admin, true);
+  assert.ok(Number(b.props[key]) - Date.now() > 29 * 24 * 60 * 60 * 1000, '使用後應延長回 30 天');
+  b.props[key] = String(Date.now() - 1000); // 已過期
+  const r = b.call({ action: 'getAll', keys: ['salary'], adminToken: tok });
+  assert.equal(r.admin, false);
+  assert.equal(r.values.salary, null);
+});

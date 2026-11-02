@@ -173,7 +173,13 @@ function tokenOk_(token) {
   if (!token || !getAdminPassword_()) return false;
   var props = PropertiesService.getScriptProperties();
   var exp = Number(props.getProperty("admintok:" + token) || 0);
-  if (exp > Date.now()) return true;
+  if (exp > Date.now()) {
+    // 使用中自動延長：剩不到 29 天就延回 30 天（每天最多寫一次），常用的管理員不會被登出
+    if (exp - Date.now() < ADMIN_TOKEN_TTL_MS - 24 * 60 * 60 * 1000) {
+      props.setProperty("admintok:" + token, String(Date.now() + ADMIN_TOKEN_TTL_MS));
+    }
+    return true;
+  }
   if (exp) props.deleteProperty("admintok:" + token);
   return false;
 }
@@ -306,7 +312,8 @@ function processRequest_(e) {
             values[wk] = map.hasOwnProperty(wk) ? map[wk] : null;
           }
         }
-        return ({ ok: true, values: values });
+        // admin：前端帶了管理員憑證時，告知憑證是否仍有效（過期就請管理員重新登入，避免讀到空薪資卻以為正常）
+        return ({ ok: true, values: values, admin: isAdmin });
       }
 
       if (action === "appendPunch") {
