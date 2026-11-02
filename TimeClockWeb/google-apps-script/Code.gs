@@ -257,6 +257,117 @@ function prevMonthKey_() {
   return y + "-" + (m < 10 ? "0" + m : m);
 }
 
+
+// ===== 洗車紀錄表：直接用這份 Google 試算表的分頁「洗車 YYYY-MM」填寫 =====
+// 版面比照原本 Excel：A 日期、B 星期、C~Q 每位員工的洗車數量（第 2 列為姓名）、R 單日合計；
+// C1 為每單位洗車獎金（預設 8）。右側 T~Z 為洗車收入：日期、班（早／晚）、80/100/180/250 台數、金額。
+var CW_FIRST_EMP_COL = 3, CW_MAX_EMP = 15, CW_TOTAL_COL = 18, CW_SALES_COL = 20;
+var CW_PRICES = [80, 100, 180, 250], CW_SHIFTS = ["早", "晚"];
+
+function cwSheetName_(ym) { return "洗車 " + ym; }
+function cwCol_(n) { var s = ""; while (n > 0) { var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
+function cwDays_(ym) { var p = ym.split("-"); return new Date(Number(p[0]), Number(p[1]), 0).getDate(); }
+function cwActiveNames_(kvSheet) {
+  var list = JSON.parse(readValue_(kvSheet, "employees") || "[]"), out = [];
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && list[i].status !== "pending" && list[i].status !== "archived" && list[i].name) out.push(list[i].name);
+  }
+  return out;
+}
+
+// 建立（或補齊）某月的洗車分頁；已存在時只把新員工補進空的姓名欄，不動已填的資料
+function cwEnsureSheet_(ss, kvSheet, ym) {
+  var name = cwSheetName_(ym), sh = ss.getSheetByName(name);
+  var days = cwDays_(ym), p = ym.split("-"), y = Number(p[0]), m = Number(p[1]);
+  var names = cwActiveNames_(kvSheet).slice(0, CW_MAX_EMP);
+  var last = 2 + days, lastEmpCol = CW_FIRST_EMP_COL + CW_MAX_EMP - 1;
+  if (!sh) {
+    sh = ss.insertSheet(name);
+    var WD = ["日", "一", "二", "三", "四", "五", "六"];
+    sh.getRange(1, 1, 1, 3).setValues([[y + "年" + m + "月", "每單位", 8]]);
+    var head = ["日期", "星期"];
+    for (var c = 0; c < CW_MAX_EMP; c++) head.push(names[c] || "");
+    head.push("單日合計");
+    sh.getRange(2, 1, 1, head.length).setValues([head]);
+    var rows = [];
+    for (var d = 1; d <= days; d++) {
+      var r = 2 + d, row = [m + "/" + d, WD[new Date(y, m - 1, d).getDay()]];
+      for (var c2 = 0; c2 < CW_MAX_EMP; c2++) row.push("");
+      row.push("=SUM(C" + r + ":" + cwCol_(lastEmpCol) + r + ")*$C$1");
+      rows.push(row);
+    }
+    sh.getRange(3, 1, days, head.length).setValues(rows);
+    var sumRow = ["數量合計", ""], bonusRow = ["洗車獎金", ""];
+    for (var c3 = 0; c3 < CW_MAX_EMP; c3++) {
+      var col = cwCol_(CW_FIRST_EMP_COL + c3);
+      sumRow.push("=SUM(" + col + "3:" + col + last + ")");
+      bonusRow.push("=ROUND(" + col + (last + 1) + "*$C$1,0)");
+    }
+    sumRow.push(""); bonusRow.push("=SUM(C" + (last + 2) + ":" + cwCol_(lastEmpCol) + (last + 2) + ")");
+    sh.getRange(last + 1, 1, 2, head.length).setValues([sumRow, bonusRow]);
+    // 洗車收入
+    var sHead = ["日期", "班"].concat(CW_PRICES).concat(["金額"]);
+    sh.getRange(2, CW_SALES_COL, 1, sHead.length).setValues([sHead]);
+    var sRows = [], pc = CW_SALES_COL + 2;
+    for (var d2 = 1; d2 <= days; d2++) {
+      for (var k = 0; k < CW_SHIFTS.length; k++) {
+        var rr = 3 + (d2 - 1) * 2 + k;
+        var f = "=" + CW_PRICES.map(function (pr, i) { return cwCol_(pc + i) + "$2*" + cwCol_(pc + i) + rr; }).join("+");
+        sRows.push([m + "/" + d2, CW_SHIFTS[k], "", "", "", "", f]);
+      }
+    }
+    sh.getRange(3, CW_SALES_COL, sRows.length, sHead.length).setValues(sRows);
+    var endRow = 3 + sRows.length;
+    sh.getRange(endRow, CW_SALES_COL, 1, sHead.length).setValues([["總計", "", "", "", "", "", "=SUM(" + cwCol_(CW_SALES_COL + 6) + "3:" + cwCol_(CW_SALES_COL + 6) + (endRow - 1) + ")"]]);
+    try { sh.setFrozenRows(2); sh.setFrozenColumns(2); } catch (eFmt) { /* 格式設定失敗不影響使用 */ }
+  } else {
+    var cur = sh.getRange(2, CW_FIRST_EMP_COL, 1, CW_MAX_EMP).getValues()[0].map(function (v) { return String(v || ""); });
+    for (var n = 0; n < names.length; n++) {
+      if (cur.indexOf(names[n]) >= 0) continue;
+      var slot = cur.indexOf("");
+      if (slot < 0) break;
+      cur[slot] = names[n];
+      sh.getRange(2, CW_FIRST_EMP_COL + slot, 1, 1).setValues([[names[n]]]);
+    }
+  }
+  return sh;
+}
+
+// 讀某月的洗車分頁，轉成 { rate, units: { 員工ID: { 日: 數量 } }, sales: { 日: { 早: { 80: 台數 } } }, unknown: [對不到的姓名] }
+function cwRead_(ss, kvSheet, ym) {
+  var sh = ss.getSheetByName(cwSheetName_(ym));
+  if (!sh) return null;
+  var days = cwDays_(ym);
+  var emps = JSON.parse(readValue_(kvSheet, "employees") || "[]"), idByName = {};
+  for (var i = 0; i < emps.length; i++) if (emps[i] && emps[i].name) idByName[emps[i].name] = emps[i].id;
+  var rate = Number(sh.getRange(1, 3, 1, 1).getValues()[0][0]) || 8;
+  var grid = sh.getRange(2, CW_FIRST_EMP_COL, days + 1, CW_MAX_EMP).getValues();
+  var units = {}, unknown = [];
+  for (var c = 0; c < CW_MAX_EMP; c++) {
+    var nm = String(grid[0][c] || "").trim();
+    if (!nm) continue;
+    var id = idByName[nm];
+    if (!id) { unknown.push(nm); continue; }
+    for (var d = 1; d <= days; d++) {
+      var v = Number(grid[d][c]);
+      if (isFinite(v) && v !== 0) { units[id] = units[id] || {}; units[id][d] = v; }
+    }
+  }
+  var sales = {};
+  var sg = sh.getRange(3, CW_SALES_COL + 1, days * 2, 1 + CW_PRICES.length).getValues();
+  for (var r = 0; r < sg.length; r++) {
+    var day = Math.floor(r / 2) + 1, shift = String(sg[r][0] || CW_SHIFTS[r % 2]);
+    for (var k = 0; k < CW_PRICES.length; k++) {
+      var cnt = Number(sg[r][1 + k]);
+      if (isFinite(cnt) && cnt !== 0) {
+        sales[day] = sales[day] || {}; sales[day][shift] = sales[day][shift] || {};
+        sales[day][shift][CW_PRICES[k]] = cnt;
+      }
+    }
+  }
+  return { rate: rate, units: units, sales: sales, unknown: unknown };
+}
+
 function processRequest_(e) {
   try {
     var body = JSON.parse(e.postData.contents);
@@ -421,6 +532,19 @@ function processRequest_(e) {
       }
 
       // 管理員登入驗證：密碼只在伺服器比對
+      // 洗車紀錄表（試算表分頁）：開啟（必要時建立）與讀取，限管理員
+      if (action === "openCarwashSheet" || action === "getCarwash") {
+        if (!isAdmin) return ({ ok: false, error: "forbidden" });
+        var cwYm = String(body.ym || "");
+        if (!/^\d{4}-\d{2}$/.test(cwYm)) return ({ ok: false, error: "bad month" });
+        var ssCw = SpreadsheetApp.getActiveSpreadsheet();
+        if (action === "openCarwashSheet") {
+          var cwSh = cwEnsureSheet_(ssCw, sheet, cwYm);
+          return ({ ok: true, url: ssCw.getUrl() + "#gid=" + cwSh.getSheetId() });
+        }
+        return ({ ok: true, data: cwRead_(ssCw, sheet, cwYm) });
+      }
+
       if (action === "adminLogin") {
         if (!getAdminPassword_()) return ({ ok: false, error: "admin password not configured" });
         if (!isAdmin) return ({ ok: true, admin: false });

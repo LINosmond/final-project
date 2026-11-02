@@ -2381,33 +2381,32 @@ window.onload=function(){setTimeout(function(){fitPages();},500);};
 }
 
 // ===== 洗車紀錄表（管理員「報表」分頁）=====
-// 依原本 Excel 洗車表：每天每位員工記洗車數量，當月合計 × 每單位金額（預設 8）＝洗車獎金；
-// 另記每天早／晚班 80、100、180、250 各價位台數，算洗車收入。
-// 每個月存在獨立的 key「carwash-YYYY-MM」，避免單一儲存格累積過大；只有管理員讀得到。
+// 實際填寫在 Google 試算表的分頁「洗車 YYYY-MM」（版面比照原本 Excel）；網站只負責開啟分頁、讀回數字，
+// 依「當月數量合計 × 每單位金額（預設 8）」算出每人洗車獎金並帶入薪資。只有管理員能開啟／讀取。
 const CARWASH_PRICES = [80, 100, 180, 250];
 const CARWASH_SHIFTS = ["早", "晚"];
 const carwashKey = (ym) => `carwash-${ym}`;
 const carwashCache = new Map();
 const carwashSubs = new Set();
-const emptyCarwash = () => ({ rate: 8, units: {}, sales: {} });
+const emptyCarwash = () => ({ rate: 8, units: {}, sales: {}, unknown: [] });
 const cwNum = (v) => { const n = Number(v); return isFinite(n) ? n : 0; };
 
 async function loadCarwash(ym, force = false) {
   if (!force && carwashCache.has(ym)) return carwashCache.get(ym);
-  const res = await window.storage.get(carwashKey(ym), true);
-  let data = emptyCarwash();
-  if (res && res.value) {
-    try { data = { ...emptyCarwash(), ...JSON.parse(res.value) }; } catch (e) { /* 損壞資料當作空白 */ }
+  let raw = null;
+  try {
+    raw = await window.storage.getCarwash(ym);
+  } catch (e) {
+    // 後端還沒更新（不認得 getCarwash）時，退回讀舊版網站內填寫的資料
+    if (e && e.code === "UNSUPPORTED_ACTION") {
+      const res = await window.storage.get(carwashKey(ym), true);
+      raw = res && res.value ? JSON.parse(res.value) : null;
+    } else throw e;
   }
+  const data = raw ? { ...emptyCarwash(), ...raw } : null;
   carwashCache.set(ym, data);
   carwashSubs.forEach((f) => f());
   return data;
-}
-
-async function saveCarwash(ym, data) {
-  await window.storage.set(carwashKey(ym), JSON.stringify(data), true);
-  carwashCache.set(ym, data);
-  carwashSubs.forEach((f) => f());
 }
 
 function useCarwash(ym) {
@@ -2420,7 +2419,7 @@ function useCarwash(ym) {
     loadCarwash(ym).catch((e) => setError((e && e.message) || "讀取失敗"));
     return () => { carwashSubs.delete(f); };
   }, [ym]);
-  return { data: carwashCache.get(ym) || null, error };
+  return { data: carwashCache.get(ym) || null, loaded: carwashCache.has(ym), error };
 }
 
 // 某員工當月洗車數量合計
@@ -2443,212 +2442,96 @@ function carwashSalesAmount(daySales) {
   return total;
 }
 
-function printCarwashMonth(data, employees, year, month) {
-  const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const days = new Date(year, month, 0).getDate();
-  const WD = ["日", "一", "二", "三", "四", "五", "六"];
-  const rate = cwNum(data.rate ?? 8);
-  const show = (v) => (cwNum(v) ? String(Math.round(cwNum(v) * 100) / 100) : "");
-  let unitRows = "";
-  for (let d = 1; d <= days; d++) {
-    const cells = employees.map((e) => `<td>${show((data.units[e.id] || {})[d])}</td>`).join("");
-    const dayTotal = employees.reduce((s, e) => s + cwNum((data.units[e.id] || {})[d]), 0);
-    unitRows += `<tr><td>${month}/${d}</td><td>${WD[new Date(year, month - 1, d).getDay()]}</td>${cells}<td>${dayTotal ? Math.round(dayTotal * rate) : ""}</td></tr>`;
-  }
-  const sumRow = employees.map((e) => `<td>${show(carwashUnitsOf(data, e.id))}</td>`).join("");
-  const bonusRow = employees.map((e) => `<td>${carwashBonusOf(data, e.id) ?? ""}</td>`).join("");
-  const allBonus = employees.reduce((s, e) => s + (carwashBonusOf(data, e.id) || 0), 0);
-  let salesRows = "", salesTotal = 0;
-  for (let d = 1; d <= days; d++) {
-    const ds = (data.sales || {})[d] || {};
-    CARWASH_SHIFTS.forEach((sh, i) => {
-      const cnt = CARWASH_PRICES.map((p) => `<td>${show(ds[sh] && ds[sh][p])}</td>`).join("");
-      const amt = CARWASH_PRICES.reduce((s, p) => s + p * cwNum(ds[sh] && ds[sh][p]), 0);
-      salesTotal += amt;
-      salesRows += `<tr>${i === 0 ? `<td rowspan="2">${month}/${d}</td>` : ""}<td>${sh}</td>${cnt}<td>${amt || ""}</td></tr>`;
-    });
-  }
-  const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>${year}年${month}月洗車紀錄</title>
-<style>
-@page { size: A4 landscape; margin: 6mm; }
-body { font-family:"Microsoft JhengHei","PingFang TC","Heiti TC",sans-serif; margin:0; color:#111; font-weight:bold; }
-.page { width: 285mm; margin: 0 auto; }
-.page + .page { page-break-before: always; }
-h1 { font-size:16px; text-align:center; margin:2px 0 6px; }
-table { border-collapse:collapse; width:100%; font-size:11px; }
-th, td { border:1px solid #333; padding:1px 3px; text-align:center; }
-th { background:#eee; }
-tr.sum td, tr.sum th { background:#f3f3f3; }
-.two { display:flex; gap:8px; } .two > div { flex:1; }
-</style></head><body>
-<div class="page"><div class="fit">
-<h1>${year} 年 ${month} 月　洗車紀錄（每單位 ${rate} 元）</h1>
-<table><thead><tr><th>日期</th><th>週</th>${employees.map((e) => `<th>${esc(e.name)}</th>`).join("")}<th>單日合計</th></tr></thead>
-<tbody>${unitRows}</tbody>
-<tfoot><tr class="sum"><th colspan="2">數量合計</th>${sumRow}<td></td></tr>
-<tr class="sum"><th colspan="2">洗車獎金</th>${bonusRow}<td>${allBonus}</td></tr></tfoot></table>
-</div></div>
-<div class="page"><div class="fit">
-<h1>${year} 年 ${month} 月　洗車收入</h1>
-<table><thead><tr><th>日期</th><th>班</th>${CARWASH_PRICES.map((p) => `<th>${p}</th>`).join("")}<th>金額</th></tr></thead>
-<tbody>${salesRows}</tbody>
-<tfoot><tr class="sum"><th colspan="${CARWASH_PRICES.length + 2}">總計</th><td>${salesTotal}</td></tr></tfoot></table>
-</div></div>
-<script>
-function fitPages(){var T=700,l=document.querySelectorAll('.fit');for(var i=0;i<l.length;i++){var h=l[i].offsetHeight;if(h>T)l[i].style.zoom=T/h;}}
-window.onload=function(){setTimeout(fitPages,300);};
-</script></body></html>`;
-  showReportOverlay(html);
-}
-
 function CarwashPanel({ employees }) {
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const ym = `${year}-${pad2(month)}`;
-  const days = new Date(year, month, 0).getDate();
-  const isThisMonth = year === today.getFullYear() && month === today.getMonth() + 1;
-  const [day, setDay] = useState(isThisMonth ? today.getDate() : 1);
-  const { data, error } = useCarwash(ym);
-  const [draft, setDraft] = useState(null);
-  const [dirty, setDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const { data, loaded, error } = useCarwash(ym);
+  const [opening, setOpening] = useState(false);
+  const [link, setLink] = useState("");
   const [msg, setMsg] = useState("");
 
-  // 讀到資料（或切換月份）時建立可編輯的草稿；有未儲存修改時不覆蓋
-  useEffect(() => {
-    if (data && !dirty) setDraft(JSON.parse(JSON.stringify(data)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, ym]);
-  useEffect(() => { if (day > days) setDay(days); }, [days, day]);
-
-  const changeMonth = (y, m) => {
-    if (dirty && !window.confirm("這個月還有未儲存的修改，確定要切換月份並放棄修改嗎？")) return;
-    setDirty(false); setDraft(null); setMsg("");
-    setYear(y); setMonth(m);
-    const t = new Date();
-    setDay(y === t.getFullYear() && m === t.getMonth() + 1 ? t.getDate() : 1);
-  };
-  const edit = (fn) => { setDraft((d) => { const n = JSON.parse(JSON.stringify(d)); fn(n); return n; }); setDirty(true); setMsg(""); };
-  const setUnit = (empId, v) => edit((n) => { n.units[empId] = n.units[empId] || {}; if (v === "") delete n.units[empId][day]; else n.units[empId][day] = v; });
-  const setSale = (sh, p, v) => edit((n) => {
-    n.sales[day] = n.sales[day] || {}; n.sales[day][sh] = n.sales[day][sh] || {};
-    if (v === "") delete n.sales[day][sh][p]; else n.sales[day][sh][p] = v;
-  });
-  const save = async () => {
-    if (!draft || saving) return;
-    // 存檔時把輸入的文字轉成數字、清掉空白與 0
-    const clean = { rate: cwNum(draft.rate) || 8, units: {}, sales: {} };
-    Object.entries(draft.units || {}).forEach(([id, byDay]) => Object.entries(byDay || {}).forEach(([d, v]) => {
-      if (cwNum(v)) { clean.units[id] = clean.units[id] || {}; clean.units[id][d] = cwNum(v); }
-    }));
-    Object.entries(draft.sales || {}).forEach(([d, bySh]) => Object.entries(bySh || {}).forEach(([sh, byP]) => Object.entries(byP || {}).forEach(([p, v]) => {
-      if (cwNum(v)) { clean.sales[d] = clean.sales[d] || {}; clean.sales[d][sh] = clean.sales[d][sh] || {}; clean.sales[d][sh][p] = cwNum(v); }
-    })));
-    setSaving(true);
+  const openSheet = async () => {
+    setMsg(""); setLink(""); setOpening(true);
+    // 先在點擊當下開一個空白分頁（避免手機擋彈出視窗），拿到網址後再導過去
+    let win = null;
+    try { win = window.open("", "_blank"); } catch (e) { win = null; }
     try {
-      await saveCarwash(ym, clean);
-      setDirty(false); setDraft(JSON.parse(JSON.stringify(clean))); setMsg("已儲存");
+      const url = await window.storage.openCarwashSheet(ym);
+      if (win && !win.closed) win.location.href = url;
+      else setLink(url);
+      setLink(url);
     } catch (e) {
-      setMsg(`儲存失敗：${(e && e.message) || "請稍後再試"}`);
-    } finally { setSaving(false); }
+      if (win && !win.closed) win.close();
+      setMsg(e && e.code === "UNSUPPORTED_ACTION"
+        ? "後端程式尚未更新，請到 Apps Script 貼上最新版 Code.gs 並重新部署。"
+        : `開啟失敗：${(e && e.message) || "請稍後再試"}`);
+    } finally { setOpening(false); }
   };
+  const refresh = () => { setMsg(""); loadCarwash(ym, true).then(() => setMsg("已讀取最新內容")).catch((e) => setMsg(`讀取失敗：${(e && e.message) || ""}`)); };
 
   const box = { background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, marginBottom: 12 };
-  const sel = { padding: "8px 10px", borderRadius: 8, background: COLORS.panelRaised, border: `1px solid ${COLORS.border}`, color: COLORS.text, fontSize: 13 };
-  const inp = { ...SALARY_INPUT_STYLE, width: 80 };
-  const WD = ["日", "一", "二", "三", "四", "五", "六"];
-  const cur = draft || emptyCarwash();
-  const rate = cwNum(cur.rate ?? 8);
-  const ds = (cur.sales || {})[day] || {};
+  const sel = { flex: 1, padding: "8px 10px", borderRadius: 8, background: COLORS.panelRaised, border: `1px solid ${COLORS.border}`, color: COLORS.text, fontSize: 13 };
+  const rate = cwNum((data && data.rate) ?? 8);
+  const salesTotal = data ? Object.values(data.sales || {}).reduce((s, d) => s + carwashSalesAmount(d), 0) : 0;
 
   return (
     <div>
       <div style={box}>
         <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.text, marginBottom: 8 }}>洗車紀錄表</div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-          <select value={month} onChange={(e) => changeMonth(year, Number(e.target.value))} style={{ ...sel, flex: 1 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <select value={month} onChange={(e) => { setMonth(Number(e.target.value)); setLink(""); setMsg(""); }} style={sel}>
             {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{m} 月</option>)}
           </select>
-          <select value={year} onChange={(e) => changeMonth(Number(e.target.value), month)} style={{ ...sel, flex: 1 }}>
+          <select value={year} onChange={(e) => { setYear(Number(e.target.value)); setLink(""); setMsg(""); }} style={sel}>
             {[today.getFullYear() - 1, today.getFullYear(), today.getFullYear() + 1].map((y) => <option key={y} value={y}>{y}</option>)}
           </select>
         </div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 13, color: COLORS.textMuted }}>每單位洗車獎金（元）</span>
-          <input type="number" inputMode="decimal" value={cur.rate ?? 8} onChange={(e) => edit((n) => { n.rate = e.target.value; })} style={inp} />
+        <button onClick={openSheet} disabled={opening} style={{ width: "100%", padding: "12px 0", borderRadius: 8, border: "none", background: COLORS.brass, color: "#20160b", fontSize: 15, fontWeight: 700, cursor: "pointer", marginBottom: 8 }}>
+          {opening ? "開啟中…" : `📝 開啟 ${month} 月洗車試算表填寫`}
+        </button>
+        {link && (
+          <a href={link} target="_blank" rel="noreferrer" style={{ display: "block", textAlign: "center", fontSize: 13, color: COLORS.brass, marginBottom: 8 }}>
+            如果沒有自動跳轉，點這裡開啟試算表
+          </a>
+        )}
+        <button onClick={refresh} style={{ width: "100%", padding: "10px 0", borderRadius: 8, border: `1px solid ${COLORS.brassDim}`, background: "none", color: COLORS.brass, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+          🔄 填完後按這裡重新讀取
+        </button>
+        {msg && <div style={{ fontSize: 12, marginTop: 8, color: msg.startsWith("已") ? COLORS.brass : COLORS.red, lineHeight: 1.5 }}>{msg}</div>}
+        <div style={{ fontSize: 11, color: COLORS.textFaint, marginTop: 8, lineHeight: 1.6 }}>
+          第一次開某個月份時，會在試算表自動建立「洗車 {ym}」分頁（版面同原本 Excel）。C1 是每單位洗車獎金（預設 8），
+          每天在自己姓名欄填洗車數量；右邊填早／晚班 80、100、180、250 各價位台數。
+          讀取後，每人洗車獎金會自動帶入當月「薪資」的洗車獎金欄。
         </div>
-        {error && <div style={{ fontSize: 12, color: COLORS.red, marginTop: 8 }}>讀取失敗：{error}</div>}
-        {!draft && !error && <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 8 }}>讀取中…</div>}
       </div>
 
-      {draft && (
-        <>
-          <div style={box}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-              <button onClick={() => setDay((d) => Math.max(1, d - 1))} style={{ ...sel, cursor: "pointer" }}>◀</button>
-              <select value={day} onChange={(e) => setDay(Number(e.target.value))} style={{ ...sel, flex: 1, textAlign: "center" }}>
-                {Array.from({ length: days }, (_, i) => i + 1).map((d) => (
-                  <option key={d} value={d}>{month}/{d}（{WD[new Date(year, month - 1, d).getDay()]}）</option>
-                ))}
-              </select>
-              <button onClick={() => setDay((d) => Math.min(days, d + 1))} style={{ ...sel, cursor: "pointer" }}>▶</button>
-            </div>
-            <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 4 }}>當天每人洗車數量</div>
+      <div style={box}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.text, marginBottom: 6 }}>{month} 月彙總（從試算表讀取）</div>
+        {error && <div style={{ fontSize: 12, color: COLORS.red }}>讀取失敗：{error}</div>}
+        {!error && !loaded && <div style={{ fontSize: 12, color: COLORS.textMuted }}>讀取中…</div>}
+        {!error && loaded && !data && <div style={{ fontSize: 12, color: COLORS.textMuted }}>這個月還沒有洗車試算表，按上面的按鈕開啟後就會建立。</div>}
+        {data && (
+          <>
             {employees.map((e) => (
-              <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: `1px solid ${COLORS.border}` }}>
-                <span style={{ fontSize: 13, color: COLORS.text }}>{e.name}</span>
-                <input type="number" inputMode="decimal" aria-label={`${e.name} 洗車數量`} value={(cur.units[e.id] || {})[day] ?? ""} onChange={(ev) => setUnit(e.id, ev.target.value)} style={inp} />
+              <div key={e.id} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: `1px solid ${COLORS.border}`, fontSize: 13 }}>
+                <span style={{ color: COLORS.text }}>{e.name}</span>
+                <span style={{ color: COLORS.textMuted }}>{Math.round(carwashUnitsOf(data, e.id) * 100) / 100} × {rate} ＝ <b style={{ color: COLORS.brass }}>{carwashBonusOf(data, e.id) ?? 0}</b></span>
               </div>
             ))}
-            <div style={{ textAlign: "right", fontSize: 12, color: COLORS.textMuted, marginTop: 6 }}>
-              單日合計 {Math.round(employees.reduce((s, e) => s + cwNum((cur.units[e.id] || {})[day]), 0) * rate)} 元
-            </div>
-
-            <div style={{ fontSize: 12, color: COLORS.textMuted, margin: "14px 0 4px" }}>當天洗車收入（台數）</div>
-            {CARWASH_SHIFTS.map((sh) => (
-              <div key={sh} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 0", borderBottom: `1px solid ${COLORS.border}` }}>
-                <span style={{ fontSize: 13, color: COLORS.text, width: 30 }}>{sh}</span>
-                {CARWASH_PRICES.map((p) => (
-                  <label key={p} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", fontSize: 10, color: COLORS.textFaint }}>
-                    {p}
-                    <input type="number" inputMode="numeric" aria-label={`${sh}班 ${p} 元台數`} value={(ds[sh] || {})[p] ?? ""} onChange={(ev) => setSale(sh, p, ev.target.value)} style={{ ...inp, width: "100%", padding: "6px 4px", textAlign: "center" }} />
-                  </label>
-                ))}
-              </div>
-            ))}
-            <div style={{ textAlign: "right", fontSize: 12, color: COLORS.textMuted, marginTop: 6 }}>當天收入 {carwashSalesAmount(ds)} 元</div>
-
-            <button onClick={save} disabled={!dirty || saving} style={{ width: "100%", marginTop: 12, padding: "11px 0", borderRadius: 8, border: "none", background: dirty ? COLORS.brass : COLORS.border, color: "#20160b", fontSize: 14, fontWeight: 700, cursor: dirty ? "pointer" : "default" }}>
-              {saving ? "儲存中…" : dirty ? "💾 儲存本月洗車紀錄" : "已是最新"}
-            </button>
-            {msg && <div style={{ fontSize: 12, marginTop: 6, color: msg.startsWith("已") ? COLORS.brass : COLORS.red }}>{msg}</div>}
-          </div>
-
-          <div style={box}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.text, marginBottom: 6 }}>{month} 月彙總</div>
-            {employees.map((e) => {
-              const units = Object.values(cur.units[e.id] || {}).reduce((s, v) => s + cwNum(v), 0);
-              return (
-                <div key={e.id} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: `1px solid ${COLORS.border}`, fontSize: 13 }}>
-                  <span style={{ color: COLORS.text }}>{e.name}</span>
-                  <span style={{ color: COLORS.textMuted }}>{Math.round(units * 100) / 100} × {rate} ＝ <b style={{ color: COLORS.brass }}>{Math.round(units * rate)}</b></span>
-                </div>
-              );
-            })}
             <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0 0", fontSize: 13 }}>
               <span style={{ color: COLORS.text }}>洗車收入合計</span>
-              <b style={{ color: COLORS.brass }}>{Object.values(cur.sales || {}).reduce((s, d) => s + carwashSalesAmount(d), 0)}</b>
+              <b style={{ color: COLORS.brass }}>{salesTotal}</b>
             </div>
-            <div style={{ fontSize: 11, color: COLORS.textFaint, marginTop: 8, lineHeight: 1.5 }}>
-              儲存後，每人洗車獎金會自動帶入當月「薪資」的洗車獎金欄（薪資頁手動改成其他金額則以手動為準）。
-            </div>
-            <button onClick={() => printCarwashMonth(cur, employees, year, month)} style={{ width: "100%", marginTop: 10, padding: "10px 0", borderRadius: 8, border: `1px solid ${COLORS.brassDim}`, background: "none", color: COLORS.brass, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-              🖨 列印整月洗車表
-            </button>
-          </div>
-        </>
-      )}
+            {(data.unknown || []).length > 0 && (
+              <div style={{ fontSize: 11, color: COLORS.red, marginTop: 8 }}>
+                試算表裡這些姓名對不到系統員工，不會計入薪資：{data.unknown.join("、")}
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
