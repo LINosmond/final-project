@@ -149,6 +149,8 @@ function jsonResponse_(obj) {
 // 受保護資料：salary / declaration / salaryPublished 只有管理員讀得到；所有寫入（set/delete/審核）都要管理員。
 // 員工讀到的員工名單會被拿掉手機號碼（手機就是登入密碼，不能外流）。
 var ADMIN_ONLY_READ = { salary: true, declaration: true, salaryPublished: true };
+// 洗車紀錄表（每月一個 key：carwash-YYYY-MM）同樣只有管理員讀得到
+function adminOnlyKey_(k) { return !!ADMIN_ONLY_READ[k] || /^carwash-/.test(String(k)); }
 
 function getAdminPassword_() {
   return PropertiesService.getScriptProperties().getProperty("ADMIN_PASSWORD") || "";
@@ -303,7 +305,7 @@ function processRequest_(e) {
           var wk = wantKeys[k];
           if (wk === "punches") {
             values[wk] = JSON.stringify(isAdmin ? allPunches : withoutArchivedPunches_(allPunches, JSON.parse(map.employees || "[]")));
-          } else if (ADMIN_ONLY_READ[wk] && !isAdmin) {
+          } else if (adminOnlyKey_(wk) && !isAdmin) {
             values[wk] = null; // 受保護資料：非管理員一律讀不到
           } else if (wk === "employees" && !isAdmin) {
             var rawEmps = map.hasOwnProperty(wk) ? map[wk] : null;
@@ -464,7 +466,7 @@ function processRequest_(e) {
           var readPunches = readPunches_();
           return ({ ok: true, value: JSON.stringify(isAdmin ? readPunches : withoutArchivedPunches_(readPunches, JSON.parse(readValue_(sheet, "employees") || "[]"))) });
         }
-        if (ADMIN_ONLY_READ[key] && !isAdmin) return ({ ok: true, value: null });
+        if (adminOnlyKey_(key) && !isAdmin) return ({ ok: true, value: null });
         var v = readValue_(sheet, key);
         if (key === "employees" && !isAdmin && v != null) v = JSON.stringify(stripPhones_(JSON.parse(v || "[]")));
         return ({ ok: true, value: v });

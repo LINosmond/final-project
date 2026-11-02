@@ -198,3 +198,42 @@ test('實際勞健保：9 月起採公告金額，之前月份不受影響；管
   const zhang = salaryEffectiveRecord({ id: 'z', name: '張清清', status: 'active' }, {}, [], 2026, 9, 2, {});
   assert.notEqual(zhang.healthIns, 2840);
 });
+
+test('洗車紀錄表：獎金＝數量合計×單價；帶入薪資，手動非 0 金額優先', async () => {
+  const { carwashBonusOf } = await import(pathToFileURL(generated));
+  const data = { rate: 8, units: { test: { 1: 11, 2: 9.5, 3: 8.2 } }, sales: {} };
+  assert.equal(carwashBonusOf(data, 'test'), Math.round(28.7 * 8));
+  assert.equal(carwashBonusOf(data, 'other'), null);
+  assert.equal(carwashBonusOf(null, 'test'), null);
+  const auto = salaryEffectiveRecord(emp, {}, [], year, month, 2, holidays, data);
+  assert.equal(auto.carWash, 230);
+  const savedZero = { test: { [ym]: { carWash: 0 } } };
+  assert.equal(salaryEffectiveRecord(emp, savedZero, [], year, month, 2, holidays, data).carWash, 230);
+  const manual = { test: { [ym]: { carWash: 999 } } };
+  assert.equal(salaryEffectiveRecord(emp, manual, [], year, month, 2, holidays, data).carWash, 999);
+  assert.equal(salaryEffectiveRecord(emp, {}, [], year, month, 2, holidays, null).carWash, 0);
+});
+
+test('洗車紀錄表：在報表分頁輸入當天數量與台數後儲存，寫入該月 carwash key', async () => {
+  const { CarwashPanel } = await import(pathToFileURL(generated));
+  const writes = [];
+  global.window = { confirm: () => true, storage: {
+    get: async () => null,
+    set: async (key, value, shared) => { writes.push({ key, value: JSON.parse(value), shared }); },
+  } };
+  let view;
+  await act(async () => { view = create(React.createElement(CarwashPanel, { employees: [emp, { id: 'b', name: 'B' }] })); });
+  const field = (label) => view.root.findByProps({ 'aria-label': label });
+  await act(async () => { field('Test 洗車數量').props.onChange({ target: { value: '9.5' } }); });
+  await act(async () => { field('早班 180 元台數').props.onChange({ target: { value: '2' } }); });
+  const save = view.root.findAllByType('button').find(b => String(b.props.children).includes('儲存本月洗車紀錄'));
+  await act(async () => { await save.props.onClick(); });
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].key, `carwash-${ym}`);
+  assert.equal(writes[0].shared, true);
+  const d = new Date().getDate();
+  assert.equal(writes[0].value.units.test[d], 9.5);
+  assert.equal(writes[0].value.sales[d]['早'][180], 2);
+  assert.equal(writes[0].value.rate, 8);
+  await act(async () => view.unmount());
+});
