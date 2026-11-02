@@ -153,3 +153,12 @@ test('管理員憑證：使用中自動延長；過期後 getAll 回報 admin=fa
   assert.equal(r.admin, false);
   assert.equal(r.values.salary, null);
 });
+
+test('洗車紀錄表（carwash-YYYY-MM）只有管理員讀得到，非管理員不能寫', () => {
+  const b = seeded();
+  assert.equal(b.call({ action: 'set', key: 'carwash-2026-10', value: '{"rate":8}' }).ok, false);
+  assert.equal(b.call({ action: 'set', key: 'carwash-2026-10', value: '{"rate":8}', ...A }).ok, true);
+  assert.equal(b.call({ action: 'get', key: 'carwash-2026-10' }).value, null);
+  assert.equal(b.call({ action: 'getAll', keys: ['carwash-2026-10'] }).values['carwash-2026-10'], null);
+  assert.equal(b.call({ action: 'get', key: 'carwash-2026-10', ...A }).value, '{"rate":8}');
+});
