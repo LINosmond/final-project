@@ -182,3 +182,19 @@ test('匯出指定人員／月份：只讀已固定快照，人員×月份成欄
   assert.match(html, /未產生/);
   assert.match(html, /A4 landscape/);
 });
+
+test('實際勞健保：9 月起採公告金額，之前月份不受影響；管理員之後存的優先；未列名者不變', async () => {
+  const e1 = { id: 'x1', name: '劉祐寧', status: 'active' };
+  const sep = salaryEffectiveRecord(e1, {}, [], 2026, 9, 2, {});
+  assert.equal(sep.laborIns, 1002); assert.equal(sep.healthIns, 470);
+  const oct = salaryEffectiveRecord(e1, {}, [], 2026, 10, 2, {});
+  assert.equal(oct.laborIns, 1002);
+  const aug = salaryEffectiveRecord(e1, {}, [], 2026, 8, 2, {});
+  assert.equal(aug.laborIns, 758);
+  const saved8 = { x1: { '2026-08': { laborIns: 800, healthIns: 400 } } };
+  assert.equal(salaryEffectiveRecord(e1, saved8, [], 2026, 9, 2, {}).laborIns, 1002);
+  const saved10 = { x1: { '2026-10': { laborIns: 1100, healthIns: 500 } } };
+  assert.equal(salaryEffectiveRecord(e1, saved10, [], 2026, 11, 2, {}).laborIns, 1100);
+  const zhang = salaryEffectiveRecord({ id: 'z', name: '張清清', status: 'active' }, {}, [], 2026, 9, 2, {});
+  assert.notEqual(zhang.healthIns, 2840);
+});

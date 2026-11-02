@@ -1806,6 +1806,30 @@ function salaryHoursOf(e, punches, year, month, multiplier, overrides) {
   return { work: salRound2(bMin / 60), ot: salRound2(oMin / 60) };
 }
 
+// 實際投保金額（員工自付部分），依「生效月份」記錄；之後月份沿用，直到有更新的一筆。
+// 來源：115 年 9 月勞保局投保明細（個人負擔保費）與健保署繳款單（自付保費合計）。
+// 顏玉津、張清清、林義能依指示不填；陳冠源依 30,300 級距（勞保 758／健保 470）。
+const OFFICIAL_INSURANCE = [
+  { from: "2026-09", byName: {
+    "許嘉晏": { laborIns: 1050, healthIns: 470 },
+    "林毅傑": { laborIns: 870, healthIns: 470 },
+    "林宸漢": { laborIns: 738, healthIns: 458 },
+    "何嘉玲": { laborIns: 738, healthIns: 458 },
+    "李明諺": { laborIns: 758, healthIns: 470 },
+    "劉祐寧": { laborIns: 1002, healthIns: 470 },
+    "韓建龍": { laborIns: 955, healthIns: 470 },
+    "陳冠源": { laborIns: 758, healthIns: 470 },
+  } },
+];
+
+function officialInsuranceFor(name, ym) {
+  let hit = null;
+  for (const t of OFFICIAL_INSURANCE) {
+    if (t.from <= ym && t.byName[name]) hit = { from: t.from, ...t.byName[name] };
+  }
+  return hit;
+}
+
 // 金額設定取當月紀錄／固定設定；工時一律取最新考勤（包含舊版曾固定時數的紀錄）。
 function salaryEffectiveRecord(e, salary, punches, year, month, multiplier, overrides) {
   const ym = `${year}-${pad2(month)}`;
@@ -1818,8 +1842,12 @@ function salaryEffectiveRecord(e, salary, punches, year, month, multiplier, over
   // 勞保／健保「逐月獨立」：該月有存就用該月；沒存則預填「上一個有存過的月份」的值，再沒有才用固定設定／預設。
   const prevKey = Object.keys(empSal).filter((k) => /^\d{4}-\d{2}$/.test(k) && k < ym && empSal[k] && (empSal[k].laborIns != null || empSal[k].healthIns != null)).sort().pop();
   const prev = prevKey ? empSal[prevKey] : {};
-  const dLabor = pick(prev.laborIns, pick(d.laborIns, seed.laborIns, 0), 0);
-  const dHealth = pick(prev.healthIns, pick(d.healthIns, seed.healthIns, 0), 0);
+  // 勞保局／健保署的實際金額（依月份生效）；該月沒手動存過時優先採用，
+  // 但若管理員在生效月份之後又存過新的勞健保，以管理員存的為準。
+  const off = officialInsuranceFor(e.name, ym);
+  const usePrev = prevKey && (!off || prevKey >= off.from);
+  const dLabor = usePrev ? pick(prev.laborIns, pick(d.laborIns, seed.laborIns, 0), 0) : off ? off.laborIns : pick(d.laborIns, seed.laborIns, 0);
+  const dHealth = usePrev ? pick(prev.healthIns, pick(d.healthIns, seed.healthIns, 0), 0) : off ? off.healthIns : pick(d.healthIns, seed.healthIns, 0);
   const dHourly = pick(d.hourlyRate, seed.hourlyRate, 0);
   const dDuty = pick(d.dutyAllowance, seed.dutyAllowance, 0);
   const dSpecial = pick(d.specialBonus, seed.specialBonus, 0);
