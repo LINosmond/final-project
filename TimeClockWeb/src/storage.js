@@ -122,7 +122,8 @@ async function callApiOnce(action, extra = {}) {
 // 整包覆寫、刪除、審核不自動重送，
 // 避免「伺服器已完成但回覆遺失」時再次覆蓋期間其他人的修改。
 async function callApi(action, extra = {}) {
-  const readOnly = action === "get" || action === "getAll" || action === "adminLogin" || action === "getMySalary";
+  const readOnly = action === "get" || action === "getAll" || action === "adminLogin" || action === "getMySalary" ||
+    action === "getCarwash" || action === "openCarwashSheet"; // 開啟洗車分頁可重複執行（已存在就不重建）
   const idempotent = (action === "appendPunch" && Boolean(extra.entry?.id)) ||
     (action === "findOrCreateEmployee" && Boolean(extra.name && extra.phone));
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -222,6 +223,18 @@ const storage = {
   // 員工查看自己上個月薪資：以姓名＋手機號碼由後端驗證身分（不傳員工 ID）。
   async getMySalary(name, phone) {
     return await callApi("getMySalary", { name, phone });
+  },
+
+  // 洗車紀錄表（Google 試算表分頁「洗車 YYYY-MM」）：讀取內容；分頁不存在時回傳 null
+  async getCarwash(ym) {
+    const data = await callApi("getCarwash", { ym });
+    return data.data || null;
+  },
+
+  // 開啟（必要時建立）某月的洗車分頁，回傳試算表網址
+  async openCarwashSheet(ym) {
+    const data = await callApi("openCarwashSheet", { ym });
+    return data.url;
   },
 
   // 管理員審核用的原子操作：decision 為 "approve"（通過）或 "reject"（拒絕移除）。

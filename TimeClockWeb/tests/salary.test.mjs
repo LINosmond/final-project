@@ -214,26 +214,22 @@ test('洗車紀錄表：獎金＝數量合計×單價；帶入薪資，手動非
   assert.equal(salaryEffectiveRecord(emp, {}, [], year, month, 2, holidays, null).carWash, 0);
 });
 
-test('洗車紀錄表：在報表分頁輸入當天數量與台數後儲存，寫入該月 carwash key', async () => {
+test('洗車紀錄表：按「開啟試算表」會跳到後端回傳的分頁網址；讀取後彙總顯示獎金', async () => {
   const { CarwashPanel } = await import(pathToFileURL(generated));
-  const writes = [];
-  global.window = { confirm: () => true, storage: {
-    get: async () => null,
-    set: async (key, value, shared) => { writes.push({ key, value: JSON.parse(value), shared }); },
+  const opened = { location: { href: '' }, closed: false };
+  global.window = { open: () => opened, storage: {
+    getCarwash: async () => ({ rate: 8, units: { test: { 1: 10, 2: 5.5 } }, sales: { 1: { '早': { 180: 2 } } }, unknown: ['外人'] }),
+    openCarwashSheet: async (ym2) => `https://docs.google.com/spreadsheets/d/x/edit#gid=${ym2}`,
   } };
   let view;
-  await act(async () => { view = create(React.createElement(CarwashPanel, { employees: [emp, { id: 'b', name: 'B' }] })); });
-  const field = (label) => view.root.findByProps({ 'aria-label': label });
-  await act(async () => { field('Test 洗車數量').props.onChange({ target: { value: '9.5' } }); });
-  await act(async () => { field('早班 180 元台數').props.onChange({ target: { value: '2' } }); });
-  const save = view.root.findAllByType('button').find(b => String(b.props.children).includes('儲存本月洗車紀錄'));
-  await act(async () => { await save.props.onClick(); });
-  assert.equal(writes.length, 1);
-  assert.equal(writes[0].key, `carwash-${ym}`);
-  assert.equal(writes[0].shared, true);
-  const d = new Date().getDate();
-  assert.equal(writes[0].value.units.test[d], 9.5);
-  assert.equal(writes[0].value.sales[d]['早'][180], 2);
-  assert.equal(writes[0].value.rate, 8);
+  await act(async () => { view = create(React.createElement(CarwashPanel, { employees: [emp] })); });
+  await act(async () => {});
+  const text = () => JSON.stringify(view.toJSON());
+  assert.match(text(), /124/); // (10+5.5)×8
+  assert.match(text(), /360/); // 2×180
+  assert.match(text(), /外人/);
+  const open = view.root.findAllByType('button').find(b => String(b.props.children).includes('洗車試算表填寫'));
+  await act(async () => { await open.props.onClick(); });
+  assert.equal(opened.location.href, `https://docs.google.com/spreadsheets/d/x/edit#gid=${ym}`);
   await act(async () => view.unmount());
 });
