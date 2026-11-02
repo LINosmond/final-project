@@ -249,6 +249,22 @@ function withoutArchivedPunches_(punches, employees) {
   return punches.filter(function(p) { return !archived[p.employeeId]; });
 }
 
+// 上班打卡：選的半點比伺服器現在時間早超過 6 分鐘就拒絕（與前端 canPickEarlierSlot 同一條規則）。
+// 多給 2 分鐘緩衝，容許網路延遲與自動重試；下班不限制。
+// 23:30 之後只剩 23:30 一個選項（沒有更晚的半點），維持可以打卡。
+var CLOCK_IN_EARLIER_GRACE_MS = 6 * 60 * 1000;
+var CLOCK_IN_SERVER_SLACK_MS = 2 * 60 * 1000;
+function clockInTooLate_(entry, nowMs) {
+  if (entry.type !== "in") return false;
+  var ts = Number(entry.ts);
+  if (!isFinite(ts)) return true;
+  var diff = nowMs - ts;
+  if (diff <= CLOCK_IN_EARLIER_GRACE_MS + CLOCK_IN_SERVER_SLACK_MS) return false;
+  var hm = Utilities.formatDate(new Date(ts), "Asia/Taipei", "HH:mm");
+  if (hm === "23:30" && diff < 30 * 60 * 1000 + CLOCK_IN_SERVER_SLACK_MS) return false;
+  return true;
+}
+
 // 台北時間的「上個月」，格式 YYYY-MM
 function prevMonthKey_() {
   var parts = Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy-M").split("-");
@@ -448,6 +464,7 @@ function processRequest_(e) {
           if (punches[pi].id === entry.id) { already = true; break; }
         }
         if (!already) {
+          if (clockInTooLate_(entry, Date.now())) return { ok: false, error: "clock-in too late" };
           var psh = getPunchSheet_();
           var newRow = psh.getLastRow() + 1;
           psh.getRange(newRow, 1, 1, PUNCH_COLS).setNumberFormat("@").setValues([punchToRow_(entry)]);

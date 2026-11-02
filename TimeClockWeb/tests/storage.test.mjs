@@ -30,7 +30,7 @@ const ADMIN = { adminPassword: 'fixture-key' };
 test('後端：重試同筆打卡不重複，其他員工同時打卡保留', () => {
   const b = backend();
   b.kv.set('employees', JSON.stringify([{ id:'e1', status:'active' }, { id:'e2' }]));
-  const entry = { id: 'p1', employeeId: 'e1', employeeName: 'Fixture', type: 'in', ts: 1000, actualTs: 1200 };
+  const entry = { id: 'p1', employeeId: 'e1', employeeName: 'Fixture', type: 'in', ts: Date.now(), actualTs: 1200 };
   assert.equal(b.call({ action: 'appendPunch', entry }).punches.length, 1);
   assert.equal(b.call({ action: 'appendPunch', entry }).punches.length, 1);
   const result = b.call({ action: 'appendPunch', entry: { ...entry, id: 'p2', employeeId: 'e2' } });
@@ -69,4 +69,19 @@ test('後端：新帳號待審核，審核通過；錯誤 API key 不寫入', ()
   assert.equal(approved.employees[0].status, 'active');
   const denied = b.call({ action: 'set', key: 'salary', value: '{}', apiKey: 'wrong', ...ADMIN });
   assert.equal(denied.ok, false); assert.equal(b.kv.has('salary'), false);
+});
+
+test('後端：上班打卡選的時間早超過 6 分鐘（含 2 分鐘緩衝）就拒絕，下班不限制', () => {
+  const b = backend();
+  b.kv.set('employees', JSON.stringify([{ id:'e1', status:'active' }]));
+  const base = { employeeId: 'e1', employeeName: 'Fixture' };
+  const ok = b.call({ action: 'appendPunch', entry: { ...base, id: 'p1', type: 'in', ts: Date.now() - 7 * 60000 } });
+  assert.equal(ok.ok, true);
+  const late = b.call({ action: 'appendPunch', entry: { ...base, id: 'p2', type: 'in', ts: Date.now() - 9 * 60000 } });
+  assert.equal(late.ok, false); assert.equal(late.error, 'clock-in too late');
+  const out = b.call({ action: 'appendPunch', entry: { ...base, id: 'p3', type: 'out', ts: Date.now() - 60 * 60000 } });
+  assert.equal(out.ok, true);
+  // 已寫入的同一筆重試，不受時間限制，仍回成功
+  const retry = b.call({ action: 'appendPunch', entry: { ...base, id: 'p1', type: 'in', ts: Date.now() - 60 * 60000 } });
+  assert.equal(retry.ok, true);
 });
