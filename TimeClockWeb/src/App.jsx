@@ -2529,8 +2529,8 @@ function CarwashPanel({ employees }) {
       <div style={box}>
         <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.text, marginBottom: 8 }}>列印用表格</div>
         <div style={{ display: "flex", gap: 8 }}>
-          {[["handwritten", "🖨 列印手抄版"], ["attendance", `🖨 列印 ${month} 月出勤表`]].map(([w, label]) => (
-            <button key={w} onClick={() => printForm(w)} disabled={!!printing} style={{ flex: 1, padding: "12px 0", borderRadius: 8, border: `1px solid ${COLORS.brassDim}`, background: "none", color: COLORS.brass, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+          {[["handwritten12", "🖨 手抄版 1+2島"], ["handwritten3", "🖨 手抄版 3島"], ["attendance", `🖨 ${month} 月出勤表`]].map(([w, label]) => (
+            <button key={w} onClick={() => printForm(w)} disabled={!!printing} style={{ flex: 1, padding: "12px 0", borderRadius: 8, border: `1px solid ${COLORS.brassDim}`, background: "none", color: COLORS.brass, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
               {printing === w ? "準備中…" : label}
             </button>
           ))}
@@ -2542,7 +2542,7 @@ function CarwashPanel({ employees }) {
         )}
         {printMsg && <div style={{ fontSize: 12, marginTop: 8, color: COLORS.red, lineHeight: 1.5 }}>{printMsg}</div>}
         <div style={{ fontSize: 11, color: COLORS.textFaint, marginTop: 8, lineHeight: 1.6 }}>
-          打開的是 A4 PDF（試算表裡的「手抄版」「出勤表」分頁），可直接列印或存檔；出勤表的月份照上面選的年月。需要用能開這份試算表的 Google 帳號登入。
+          打開的是 A4 PDF，一張表一頁（試算表裡的「手抄版」「出勤表」分頁），可直接列印或存檔；出勤表的月份照上面選的年月。需要用能開這份試算表的 Google 帳號登入。
         </div>
       </div>
 
