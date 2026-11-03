@@ -322,6 +322,18 @@ function cwFillNames_(sh, row, firstCol, max, names) {
   return overflow;
 }
 // 複製「範本」分頁成新月份：填月份、日期、姓名，單價公式改成 CW_DEFAULT_RATE，清掉該月沒有的日子
+// 列印用分頁：網站管理員畫面的「列印」按鈕用。range 是要印的範圍（同原本 Excel 的列印範圍）
+var PRINT_FORMS_ = {
+  handwritten: { name: "手抄版", range: "A1:S38" },
+  attendance: { name: "出勤表", range: "A1:J34", monthly: true }
+};
+function printPdfUrl_(ss, sh, range) {
+  var base = ss.getUrl().replace(/\/edit.*$/, "");
+  return base + "/export?format=pdf&gid=" + sh.getSheetId() + "&range=" + encodeURIComponent(range) +
+    "&size=A4&portrait=true&fitw=true&gridlines=false&printtitle=false&sheetnames=false&pagenum=UNDEFINED" +
+    "&horizontal_alignment=CENTER&top_margin=0.4&bottom_margin=0.4&left_margin=0.4&right_margin=0.4";
+}
+
 // 新的洗車分頁排在最後一個洗車分頁後面，不要跑到列印用分頁（手抄版、出勤表）後面；排序失敗不影響使用
 function cwPlaceSheet_(ss, sh) {
   try {
@@ -678,6 +690,23 @@ function processRequest_(e) {
           return ({ ok: true, url: ssCw.getUrl() + "#gid=" + cwRes.sheet.getSheetId(), overflow: cwRes.overflow });
         }
         return ({ ok: true, data: cwRead_(ssCw, sheet, cwYm) });
+      }
+
+      // 列印用分頁（手抄版、出勤表）：回傳 A4 一頁寬的 PDF 下載網址，限管理員。出勤表先換成指定月份。
+      if (action === "printSheetUrl") {
+        if (!isAdmin) return ({ ok: false, error: "forbidden" });
+        var pf = PRINT_FORMS_[String(body.which || "")];
+        if (!pf) return ({ ok: false, error: "bad form" });
+        var ssPr = SpreadsheetApp.getActiveSpreadsheet(), shPr = ssPr.getSheetByName(pf.name);
+        if (!shPr) return ({ ok: false, error: "找不到分頁：" + pf.name });
+        if (pf.monthly) {
+          var prYm = String(body.ym || "");
+          if (!/^\d{4}-\d{2}$/.test(prYm)) return ({ ok: false, error: "bad month" });
+          shPr.getRange("A1").setValue(Number(prYm.slice(5)));
+          shPr.getRange("A4").setFormula("=DATE(" + Number(prYm.slice(0, 4)) + ",A1,1)");
+        }
+        SpreadsheetApp.flush();
+        return ({ ok: true, url: printPdfUrl_(ssPr, shPr, pf.range) });
       }
 
       if (action === "adminLogin") {
