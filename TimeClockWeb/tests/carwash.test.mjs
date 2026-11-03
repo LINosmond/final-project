@@ -7,16 +7,18 @@ import vm from 'node:vm';
 const source = await fs.readFile(new URL('../google-apps-script/Code.gs', import.meta.url), 'utf8');
 const ADMIN_PW = '999888';
 
-function mockSheet(name, id, registry, nextId) {
+function mockSheet(name, id, registry, nextId, order = []) {
   const cells = new Map();
   const key = (r, c) => `${r},${c}`;
   const sh = {
     name, cells,
+    getName: () => sh.name,
+    getIndex: () => order.indexOf(sh) + 1,
     getSheetId: () => id,
     setFrozenRows() {}, setFrozenColumns() {},
     setName(nm) { delete registry[sh.name]; sh.name = nm; registry[nm] = sh; return sh; },
     copyTo() {
-      const copy = mockSheet(sh.name + ' 的副本', nextId(), registry, nextId);
+      const copy = mockSheet(sh.name + ' 的副本', nextId(), registry, nextId, order);
       cells.forEach((v, k) => copy.cells.set(k, v instanceof Date ? new Date(v) : v));
       registry[copy.name] = copy;
       return copy;
@@ -33,6 +35,7 @@ function mockSheet(name, id, registry, nextId) {
     set(r, c, v) { cells.set(key(r, c), v); },
     get(r, c) { return cells.get(key(r, c)); },
   };
+  order.push(sh);
   return sh;
 }
 
@@ -60,14 +63,21 @@ function fillTemplate(t) {
   t.set(33, 3, 5); t.set(33, C('AG'), 2); t.set(34, C('AM'), 1);
 }
 
-function backend(employees, { template = false } = {}) {
+function backend(employees, { template = false, extra = [] } = {}) {
   const kv = new Map([['employees', JSON.stringify(employees)]]);
   const sheets = {}; let n = 0;
   const nextId = () => 1000 + (++n);
-  if (template) fillTemplate(sheets['範本'] = mockSheet('範本', nextId(), sheets, nextId));
+  const order = [];
+  if (template) fillTemplate(sheets['範本'] = mockSheet('範本', nextId(), sheets, nextId, order));
+  for (const nm of extra) sheets[nm] = mockSheet(nm, nextId(), sheets, nextId, order);
+  let active = null;
   const ss = {
     getSheetByName: (nm) => sheets[nm] || null,
-    insertSheet: (nm) => (sheets[nm] = mockSheet(nm, nextId(), sheets, nextId)),
+    insertSheet: (nm) => (sheets[nm] = mockSheet(nm, nextId(), sheets, nextId, order)),
+    getSheets: () => order.slice(),
+    setActiveSheet: (sh) => { active = sh; return sh; },
+    moveActiveSheet: (pos) => { order.splice(order.indexOf(active), 1); order.splice(pos - 1, 0, active); },
+    order,
     getUrl: () => 'https://docs.google.com/spreadsheets/d/fixture/edit',
   };
   const props = { ADMIN_PASSWORD: ADMIN_PW };
@@ -84,7 +94,7 @@ function backend(employees, { template = false } = {}) {
   ctx.writeValue_ = (_, k, v) => kv.set(k, v);
   ctx.jsonResponse_ = obj => JSON.parse(JSON.stringify(obj));
   const call = body => ctx.doPost({ postData: { contents: JSON.stringify(body) } });
-  return { call, sheets };
+  return { call, sheets, order };
 }
 
 const emps = [
@@ -263,4 +273,18 @@ test('沒有範本時用舊版面建立，預設單價 8，讀取也照舊版面
   assert.equal(sh.get(1, 11), undefined);
   sh.set(1, 3, '');
   assert.equal(b.call({ action: 'getCarwash', ym: '2026-12', ...A }).data.rate, 8);
+});
+
+test('新的洗車分頁排在最後一個洗車分頁後面，不跑到列印用分頁後面', () => {
+  for (const template of [true, false]) {
+    const b = backend(emps, { template, extra: ['KV', '洗車 2026-10', '手抄版', '出勤表'] });
+    assert.equal(b.call({ action: 'openCarwashSheet', ym: '2026-11', ...A }).ok, true);
+    assert.equal(b.call({ action: 'openCarwashSheet', ym: '2026-12', ...A }).ok, true);
+    const names = b.order.map(s => s.name).filter(n => n !== '範本');
+    assert.deepEqual(names, ['KV', '洗車 2026-10', '洗車 2026-11', '洗車 2026-12', '手抄版', '出勤表']);
+  }
+  // 完全沒有洗車分頁時不移動
+  const b = backend(emps, { extra: ['KV', '手抄版'] });
+  b.call({ action: 'openCarwashSheet', ym: '2026-11', ...A });
+  assert.deepEqual(b.order.map(s => s.name), ['KV', '手抄版', '洗車 2026-11']);
 });

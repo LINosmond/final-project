@@ -322,9 +322,19 @@ function cwFillNames_(sh, row, firstCol, max, names) {
   return overflow;
 }
 // 複製「範本」分頁成新月份：填月份、日期、姓名，單價公式改成 CW_DEFAULT_RATE，清掉該月沒有的日子
+// 新的洗車分頁排在最後一個洗車分頁後面，不要跑到列印用分頁（手抄版、出勤表）後面；排序失敗不影響使用
+function cwPlaceSheet_(ss, sh) {
+  try {
+    var last = 0;
+    ss.getSheets().forEach(function (x) { if (x.getSheetId() !== sh.getSheetId() && /^洗車 /.test(x.getName())) last = Math.max(last, x.getIndex()); });
+    if (last && sh.getIndex() !== last + 1) { ss.setActiveSheet(sh); ss.moveActiveSheet(last + 1); }
+  } catch (e) { /* 排序失敗不影響使用 */ }
+}
+
 function cwCreateFromTemplate_(ss, tpl, name, y, m, days, names) {
   var sh = tpl.copyTo(ss);
   sh.setName(name);
+  cwPlaceSheet_(ss, sh);
   sh.getRange(1, 1, 1, 1).setValues([[m + "月"]]);
   var head = [];
   for (var c = 0; c < CW_TPL_MAX_EMP; c++) head.push(names[c] || "");
@@ -375,6 +385,7 @@ function cwEnsureSheet_(ss, kvSheet, ym) {
   var last = 2 + days, lastEmpCol = CW_FIRST_EMP_COL + CW_MAX_EMP - 1;
   if (!sh) {
     sh = ss.insertSheet(name);
+    cwPlaceSheet_(ss, sh);
     var WD = ["日", "一", "二", "三", "四", "五", "六"];
     sh.getRange(1, 1, 1, 3).setValues([[y + "年" + m + "月", "每單位", CW_DEFAULT_RATE]]);
     var head = ["日期", "星期"];
