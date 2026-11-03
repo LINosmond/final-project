@@ -24,10 +24,13 @@ function mockSheet(name, id, registry, nextId, order = []) {
       return copy;
     },
     getRange(r, c, nr = 1, nc = 1) {
+      if (typeof r === 'string') { const m = /^([A-Z]+)(\d+)$/.exec(r); c = [...m[1]].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0); r = Number(m[2]); }
       const grid = f => Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => f(cells.get(key(r + i, c + j)))));
       return {
         setValues(rows) { rows.forEach((row, i) => row.forEach((v, j) => cells.set(key(r + i, c + j), v))); return this; },
         setFormulas(rows) { return this.setValues(rows); },
+        setValue(v) { cells.set(key(r, c), v); return this; },
+        setFormula(v) { cells.set(key(r, c), v); return this; },
         getValues() { return grid(v => v ?? ''); },
         getFormulas() { return grid(v => (typeof v === 'string' && v.startsWith('=') ? v : '')); },
       };
@@ -86,7 +89,7 @@ function backend(employees, { template = false, extra = [] } = {}) {
     CacheService: { getScriptCache: () => ({ get: () => null, put() {} }) },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     Utilities: { getUuid: () => 'u', formatDate: () => '2026-10' },
-    SpreadsheetApp: { getActiveSpreadsheet: () => ss },
+    SpreadsheetApp: { getActiveSpreadsheet: () => ss, flush() {} },
   });
   vm.runInContext(source, ctx);
   ctx.getSheet_ = () => ({});
@@ -287,4 +290,19 @@ test('新的洗車分頁排在最後一個洗車分頁後面，不跑到列印�
   const b = backend(emps, { extra: ['KV', '手抄版'] });
   b.call({ action: 'openCarwashSheet', ym: '2026-11', ...A });
   assert.deepEqual(b.order.map(s => s.name), ['KV', '手抄版', '洗車 2026-11']);
+});
+
+test('列印用表格：限管理員；回傳 A4 PDF 網址；出勤表換成指定年月', () => {
+  const b = backend(emps, { extra: ['手抄版', '出勤表'] });
+  assert.equal(b.call({ action: 'printSheetUrl', which: 'attendance', ym: '2027-02' }).ok, false);
+  const hw = b.call({ action: 'printSheetUrl', which: 'handwritten', ...A });
+  assert.equal(hw.ok, true);
+  assert.ok(hw.url.startsWith(`https://docs.google.com/spreadsheets/d/fixture/export?format=pdf&gid=${b.sheets['手抄版'].getSheetId()}&range=A1%3AS38&size=A4&portrait=true&fitw=true`));
+  const at = b.call({ action: 'printSheetUrl', which: 'attendance', ym: '2027-02', ...A });
+  assert.equal(at.ok, true);
+  assert.equal(b.sheets['出勤表'].get(1, 1), 2);
+  assert.equal(b.sheets['出勤表'].get(4, 1), '=DATE(2027,A1,1)');
+  assert.equal(b.call({ action: 'printSheetUrl', which: 'attendance', ym: 'x', ...A }).ok, false);
+  assert.equal(b.call({ action: 'printSheetUrl', which: 'nope', ...A }).ok, false);
+  assert.equal(backend(emps).call({ action: 'printSheetUrl', which: 'handwritten', ...A }).ok, false); // 沒有分頁
 });

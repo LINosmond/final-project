@@ -2471,6 +2471,23 @@ function CarwashPanel({ employees }) {
         : `開啟失敗：${(e && e.message) || "請稍後再試"}`);
     } finally { setOpening(false); }
   };
+  const [printing, setPrinting] = useState("");
+  const [printLink, setPrintLink] = useState("");
+  const [printMsg, setPrintMsg] = useState("");
+  // 列印用表格：後端回傳 A4 PDF 網址。先在點擊當下開空白分頁（避免手機擋彈出視窗）
+  const printForm = async (which) => {
+    setPrintMsg(""); setPrintLink(""); setPrinting(which);
+    let win = null;
+    try { win = window.open("", "_blank"); } catch (e) { win = null; }
+    try {
+      const url = await window.storage.printSheetUrl(which, ym);
+      if (win && !win.closed) win.location.href = url;
+      setPrintLink(url);
+    } catch (e) {
+      if (win && !win.closed) win.close();
+      setPrintMsg(e && e.code === "UNSUPPORTED_ACTION" ? "後端程式尚未更新" : `開啟失敗：${(e && e.message) || "請稍後再試"}`);
+    } finally { setPrinting(""); }
+  };
   const refresh = () => { setMsg(""); loadCarwash(ym, true).then(() => setMsg("已讀取最新內容")).catch((e) => setMsg(`讀取失敗：${(e && e.message) || ""}`)); };
 
   const box = { background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, marginBottom: 12 };
@@ -2506,6 +2523,26 @@ function CarwashPanel({ employees }) {
           第一次開某個月份時，會在試算表自動建立「洗車 {ym}」分頁（版面同原本 Excel）。C1 是每單位洗車獎金（預設 8），
           每天在自己姓名欄填洗車數量；右邊填早／晚班 80、100、180、250 各價位台數。
           讀取後，每人洗車獎金會自動帶入當月「薪資」的洗車獎金欄。
+        </div>
+      </div>
+
+      <div style={box}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.text, marginBottom: 8 }}>列印用表格</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {[["handwritten", "🖨 列印手抄版"], ["attendance", `🖨 列印 ${month} 月出勤表`]].map(([w, label]) => (
+            <button key={w} onClick={() => printForm(w)} disabled={!!printing} style={{ flex: 1, padding: "12px 0", borderRadius: 8, border: `1px solid ${COLORS.brassDim}`, background: "none", color: COLORS.brass, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+              {printing === w ? "準備中…" : label}
+            </button>
+          ))}
+        </div>
+        {printLink && (
+          <a href={printLink} target="_blank" rel="noreferrer" style={{ display: "block", textAlign: "center", fontSize: 13, color: COLORS.brass, marginTop: 8 }}>
+            如果沒有自動開啟，點這裡打開 PDF
+          </a>
+        )}
+        {printMsg && <div style={{ fontSize: 12, marginTop: 8, color: COLORS.red, lineHeight: 1.5 }}>{printMsg}</div>}
+        <div style={{ fontSize: 11, color: COLORS.textFaint, marginTop: 8, lineHeight: 1.6 }}>
+          打開的是 A4 PDF（試算表裡的「手抄版」「出勤表」分頁），可直接列印或存檔；出勤表的月份照上面選的年月。需要用能開這份試算表的 Google 帳號登入。
         </div>
       </div>
 

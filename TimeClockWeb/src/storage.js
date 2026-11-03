@@ -123,7 +123,8 @@ async function callApiOnce(action, extra = {}) {
 // 避免「伺服器已完成但回覆遺失」時再次覆蓋期間其他人的修改。
 async function callApi(action, extra = {}) {
   const readOnly = action === "get" || action === "getAll" || action === "adminLogin" || action === "getMySalary" ||
-    action === "getCarwash" || action === "openCarwashSheet"; // 開啟洗車分頁可重複執行（已存在就不重建）
+    action === "getCarwash" || action === "openCarwashSheet" || // 開啟洗車分頁可重複執行（已存在就不重建）
+    action === "printSheetUrl"; // 列印網址：重送只是再設一次同一個月份
   const idempotent = (action === "appendPunch" && Boolean(extra.entry?.id)) ||
     (action === "findOrCreateEmployee" && Boolean(extra.name && extra.phone));
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -234,6 +235,12 @@ const storage = {
   // 開啟（必要時建立）某月的洗車分頁，回傳試算表網址
   async openCarwashSheet(ym) {
     const data = await callApi("openCarwashSheet", { ym });
+    return data.url;
+  },
+
+  // 列印用分頁（which：handwritten 手抄版／attendance 出勤表），回傳 PDF 網址；出勤表會先換成 ym 月份
+  async printSheetUrl(which, ym) {
+    const data = await callApi("printSheetUrl", { which, ym });
     return data.url;
   },
 
