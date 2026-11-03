@@ -279,10 +279,19 @@ function prevMonthKey_() {
 // C1 為每單位洗車獎金（預設 8）。右側 T~Z 為洗車收入：日期、班（早／晚）、80/100/180/250 台數、金額。
 var CW_FIRST_EMP_COL = 3, CW_MAX_EMP = 15, CW_TOTAL_COL = 18, CW_SALES_COL = 20;
 var CW_PRICES = [80, 100, 180, 250], CW_SHIFTS = ["早", "晚"];
+var CW_DEFAULT_RATE = 8;
+// 範本版面（複製試算表裡的「範本」分頁）：A1「M月」、C1:J1 八位員工姓名、K1「單日合計」；
+// 第 3~33 列＝1~31 號（A 日期、C~J 數量、K =SUM(Cn:Jn)*單價）；第 36 列 C~J 為獎金 =SUM(..)*單價。
+// 洗車收入：左塊 1~15 號在第 3~32 列、右塊 16~31 號在第 3~34 列，每天早、晚兩列。
+var CW_TPL_NAME = "範本", CW_TPL_MAX_EMP = 8, CW_TPL_TOTAL_COL = 11, CW_TPL_BONUS_ROW = 36;
+var CW_TPL_LEFT_COLS = [18, 20, 22, 24];   // R T V X：80/100/180/250 台數（左塊 1~15 號）
+var CW_TPL_RIGHT_COLS = [33, 35, 37, 39];  // AG AI AK AM：80/100/180/250 台數（右塊 16~31 號）
 
 function cwSheetName_(ym) { return "洗車 " + ym; }
 function cwCol_(n) { var s = ""; while (n > 0) { var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
 function cwDays_(ym) { var p = ym.split("-"); return new Date(Number(p[0]), Number(p[1]), 0).getDate(); }
+// 目前在職員工姓名，順序同網站「薪資」分頁：employees 陣列原順序（管理員可在帳號名冊上下移動），
+// 只排除待審核（pending）與已封存（archived），與前端 isCurrentEmployee 相同；沒有姓名的略過
 function cwActiveNames_(kvSheet) {
   var list = JSON.parse(readValue_(kvSheet, "employees") || "[]"), out = [];
   for (var i = 0; i < list.length; i++) {
@@ -291,16 +300,83 @@ function cwActiveNames_(kvSheet) {
   return out;
 }
 
-// 建立（或補齊）某月的洗車分頁；已存在時只把新員工補進空的姓名欄，不動已填的資料
+// 這個分頁是不是範本版面（K1 為「單日合計」；舊版面 K1 是空的，「單日合計」在 R2）
+function cwIsTemplateLayout_(sh) {
+  return String(sh.getRange(1, CW_TPL_TOTAL_COL, 1, 1).getValues()[0][0] || "").trim() === "單日合計";
+}
+// 某日在範本收入區的位置：{ row: 早班列（晚班為下一列）, cols: 四種價格的台數欄 }
+function cwTplSalesPos_(d) {
+  return d <= 15 ? { row: 3 + (d - 1) * 2, cols: CW_TPL_LEFT_COLS } : { row: 3 + (d - 16) * 2, cols: CW_TPL_RIGHT_COLS };
+}
+// 把姓名補進空的姓名格（不動已有的），回傳放不下的姓名
+function cwFillNames_(sh, row, firstCol, max, names) {
+  var cur = sh.getRange(row, firstCol, 1, max).getValues()[0].map(function (v) { return String(v || "").trim(); });
+  var overflow = [];
+  for (var n = 0; n < names.length; n++) {
+    if (cur.indexOf(names[n]) >= 0) continue;
+    var slot = cur.indexOf("");
+    if (slot < 0) { overflow.push(names[n]); continue; }
+    cur[slot] = names[n];
+    sh.getRange(row, firstCol + slot, 1, 1).setValues([[names[n]]]);
+  }
+  return overflow;
+}
+// 複製「範本」分頁成新月份：填月份、日期、姓名，單價公式改成 CW_DEFAULT_RATE，清掉該月沒有的日子
+function cwCreateFromTemplate_(ss, tpl, name, y, m, days, names) {
+  var sh = tpl.copyTo(ss);
+  sh.setName(name);
+  sh.getRange(1, 1, 1, 1).setValues([[m + "月"]]);
+  var head = [];
+  for (var c = 0; c < CW_TPL_MAX_EMP; c++) head.push(names[c] || "");
+  sh.getRange(1, CW_FIRST_EMP_COL, 1, CW_TPL_MAX_EMP).setValues([head]);
+  var dates = [];
+  for (var d = 1; d <= 31; d++) dates.push([d <= days ? new Date(y, m - 1, d) : ""]);
+  sh.getRange(3, 1, 31, 1).setValues(dates);
+  // 該月沒有的日子連星期欄（=An）也清空，不然會顯示成空日期的星期
+  if (days < 31) sh.getRange(3 + days, 2, 31 - days, 1).setValues(dates.slice(days));
+  // 單價公式：K3:K33 與第 36 列 C~J 的乘數換成預設單價，其他公式不動
+  var lastEmp = cwCol_(CW_FIRST_EMP_COL + CW_TPL_MAX_EMP - 1), kf = [], bf = [];
+  for (var r = 3; r <= 33; r++) kf.push(["=SUM(C" + r + ":" + lastEmp + r + ")*" + CW_DEFAULT_RATE]);
+  sh.getRange(3, CW_TPL_TOTAL_COL, 31, 1).setFormulas(kf);
+  for (var c2 = 0; c2 < CW_TPL_MAX_EMP; c2++) {
+    var col = cwCol_(CW_FIRST_EMP_COL + c2);
+    bf.push("=SUM(" + col + "1:" + col + "33)*" + CW_DEFAULT_RATE);
+  }
+  sh.getRange(CW_TPL_BONUS_ROW, CW_FIRST_EMP_COL, 1, CW_TPL_MAX_EMP).setFormulas([bf]);
+  // 新月份從空白開始：清掉 1~31 號的數量與收入台數這些輸入格（範本若殘留舊資料也不會帶過來；
+  // 該月沒有的日子如 2 月 29~31 號，上面已清空日期），公式保留
+  var blankRow = [], blankCol = function (n) { var a = []; for (var i = 0; i < n; i++) a.push([""]); return a; };
+  for (var c3 = 0; c3 < CW_TPL_MAX_EMP; c3++) blankRow.push("");
+  var blanks = [];
+  for (var d2 = 1; d2 <= 31; d2++) blanks.push(blankRow);
+  sh.getRange(3, CW_FIRST_EMP_COL, 31, CW_TPL_MAX_EMP).setValues(blanks);
+  // 收入台數欄與右邊一欄是合併格，只寫每欄左上那格
+  for (var k = 0; k < CW_PRICES.length; k++) {
+    sh.getRange(3, CW_TPL_LEFT_COLS[k], 30, 1).setValues(blankCol(30));
+    sh.getRange(3, CW_TPL_RIGHT_COLS[k], 32, 1).setValues(blankCol(32));
+  }
+  return sh;
+}
+
+// 建立（或補齊）某月的洗車分頁；已存在時只把新員工補進空的姓名欄，不動已填的資料。
+// 試算表有「範本」分頁就複製它；沒有就用舊的自建版面。回傳 { sheet, overflow: [姓名欄放不下的人] }
 function cwEnsureSheet_(ss, kvSheet, ym) {
   var name = cwSheetName_(ym), sh = ss.getSheetByName(name);
   var days = cwDays_(ym), p = ym.split("-"), y = Number(p[0]), m = Number(p[1]);
-  var names = cwActiveNames_(kvSheet).slice(0, CW_MAX_EMP);
+  var all = cwActiveNames_(kvSheet);
+  if (sh && cwIsTemplateLayout_(sh)) {
+    return { sheet: sh, overflow: cwFillNames_(sh, 1, CW_FIRST_EMP_COL, CW_TPL_MAX_EMP, all) };
+  }
+  var tpl = sh ? null : ss.getSheetByName(CW_TPL_NAME);
+  if (tpl) {
+    return { sheet: cwCreateFromTemplate_(ss, tpl, name, y, m, days, all), overflow: all.slice(CW_TPL_MAX_EMP) };
+  }
+  var names = all.slice(0, CW_MAX_EMP);
   var last = 2 + days, lastEmpCol = CW_FIRST_EMP_COL + CW_MAX_EMP - 1;
   if (!sh) {
     sh = ss.insertSheet(name);
     var WD = ["日", "一", "二", "三", "四", "五", "六"];
-    sh.getRange(1, 1, 1, 3).setValues([[y + "年" + m + "月", "每單位", 8]]);
+    sh.getRange(1, 1, 1, 3).setValues([[y + "年" + m + "月", "每單位", CW_DEFAULT_RATE]]);
     var head = ["日期", "星期"];
     for (var c = 0; c < CW_MAX_EMP; c++) head.push(names[c] || "");
     head.push("單日合計");
@@ -336,17 +412,9 @@ function cwEnsureSheet_(ss, kvSheet, ym) {
     var endRow = 3 + sRows.length;
     sh.getRange(endRow, CW_SALES_COL, 1, sHead.length).setValues([["總計", "", "", "", "", "", "=SUM(" + cwCol_(CW_SALES_COL + 6) + "3:" + cwCol_(CW_SALES_COL + 6) + (endRow - 1) + ")"]]);
     try { sh.setFrozenRows(2); sh.setFrozenColumns(2); } catch (eFmt) { /* 格式設定失敗不影響使用 */ }
-  } else {
-    var cur = sh.getRange(2, CW_FIRST_EMP_COL, 1, CW_MAX_EMP).getValues()[0].map(function (v) { return String(v || ""); });
-    for (var n = 0; n < names.length; n++) {
-      if (cur.indexOf(names[n]) >= 0) continue;
-      var slot = cur.indexOf("");
-      if (slot < 0) break;
-      cur[slot] = names[n];
-      sh.getRange(2, CW_FIRST_EMP_COL + slot, 1, 1).setValues([[names[n]]]);
-    }
+    return { sheet: sh, overflow: all.slice(CW_MAX_EMP) };
   }
-  return sh;
+  return { sheet: sh, overflow: cwFillNames_(sh, 2, CW_FIRST_EMP_COL, CW_MAX_EMP, all) };
 }
 
 // 讀某月的洗車分頁，轉成 { rate, units: { 員工ID: { 日: 數量 } }, sales: { 日: { 早: { 80: 台數 } } }, unknown: [對不到的姓名] }
@@ -356,7 +424,8 @@ function cwRead_(ss, kvSheet, ym) {
   var days = cwDays_(ym);
   var emps = JSON.parse(readValue_(kvSheet, "employees") || "[]"), idByName = {};
   for (var i = 0; i < emps.length; i++) if (emps[i] && emps[i].name) idByName[emps[i].name] = emps[i].id;
-  var rate = Number(sh.getRange(1, 3, 1, 1).getValues()[0][0]) || 8;
+  if (cwIsTemplateLayout_(sh)) return cwReadTemplate_(sh, days, idByName);
+  var rate = Number(sh.getRange(1, 3, 1, 1).getValues()[0][0]) || CW_DEFAULT_RATE;
   var grid = sh.getRange(2, CW_FIRST_EMP_COL, days + 1, CW_MAX_EMP).getValues();
   var units = {}, unknown = [];
   for (var c = 0; c < CW_MAX_EMP; c++) {
@@ -378,6 +447,44 @@ function cwRead_(ss, kvSheet, ym) {
       if (isFinite(cnt) && cnt !== 0) {
         sales[day] = sales[day] || {}; sales[day][shift] = sales[day][shift] || {};
         sales[day][shift][CW_PRICES[k]] = cnt;
+      }
+    }
+  }
+  return { rate: rate, units: units, sales: sales, unknown: unknown };
+}
+
+// 讀範本版面：姓名在第 1 列 C~J，數量第 3 列起（1 號＝第 3 列）；單價取 K3 公式結尾的「*數字」
+function cwReadTemplate_(sh, days, idByName) {
+  var f = String(sh.getRange(3, CW_TPL_TOTAL_COL, 1, 1).getFormulas()[0][0] || "");
+  var mm = f.match(/\*\s*(\d+(?:\.\d+)?)\s*$/);
+  var rate = mm ? Number(mm[1]) : CW_DEFAULT_RATE;
+  var heads = sh.getRange(1, CW_FIRST_EMP_COL, 1, CW_TPL_MAX_EMP).getValues()[0];
+  var grid = sh.getRange(3, CW_FIRST_EMP_COL, days, CW_TPL_MAX_EMP).getValues();
+  var units = {}, unknown = [];
+  for (var c = 0; c < CW_TPL_MAX_EMP; c++) {
+    var nm = String(heads[c] || "").trim();
+    if (!nm) continue;
+    var id = idByName[nm];
+    if (!id) { unknown.push(nm); continue; }
+    for (var d = 0; d < days; d++) {
+      var v = Number(grid[d][c]);
+      if (isFinite(v) && v !== 0) { units[id] = units[id] || {}; units[id][d + 1] = v; }
+    }
+  }
+  // 收入：左塊（R~X，第 3~32 列）與右塊（AG~AM，第 3~34 列）各讀一次
+  var span = CW_TPL_LEFT_COLS[3] - CW_TPL_LEFT_COLS[0] + 1;
+  var left = sh.getRange(3, CW_TPL_LEFT_COLS[0], 30, span).getValues();
+  var right = sh.getRange(3, CW_TPL_RIGHT_COLS[0], 32, span).getValues();
+  var sales = {};
+  for (var day = 1; day <= days; day++) {
+    var pos = cwTplSalesPos_(day), blk = day <= 15 ? left : right;
+    for (var s = 0; s < CW_SHIFTS.length; s++) {
+      for (var k = 0; k < CW_PRICES.length; k++) {
+        var cnt = Number(blk[pos.row - 3 + s][pos.cols[k] - pos.cols[0]]);
+        if (isFinite(cnt) && cnt !== 0) {
+          sales[day] = sales[day] || {}; sales[day][CW_SHIFTS[s]] = sales[day][CW_SHIFTS[s]] || {};
+          sales[day][CW_SHIFTS[s]][CW_PRICES[k]] = cnt;
+        }
       }
     }
   }
@@ -556,8 +663,8 @@ function processRequest_(e) {
         if (!/^\d{4}-\d{2}$/.test(cwYm)) return ({ ok: false, error: "bad month" });
         var ssCw = SpreadsheetApp.getActiveSpreadsheet();
         if (action === "openCarwashSheet") {
-          var cwSh = cwEnsureSheet_(ssCw, sheet, cwYm);
-          return ({ ok: true, url: ssCw.getUrl() + "#gid=" + cwSh.getSheetId() });
+          var cwRes = cwEnsureSheet_(ssCw, sheet, cwYm);
+          return ({ ok: true, url: ssCw.getUrl() + "#gid=" + cwRes.sheet.getSheetId(), overflow: cwRes.overflow });
         }
         return ({ ok: true, data: cwRead_(ssCw, sheet, cwYm) });
       }
