@@ -324,13 +324,15 @@ function cwFillNames_(sh, row, firstCol, max, names) {
 // 複製「範本」分頁成新月份：填月份、日期、姓名，單價公式改成 CW_DEFAULT_RATE，清掉該月沒有的日子
 // 列印用分頁：網站管理員畫面的「列印」按鈕用。range 是要印的範圍（同原本 Excel 的列印範圍）
 var PRINT_FORMS_ = {
-  handwritten: { name: "手抄版", range: "A1:S38" },
+  // 手抄版左右兩份（1+2島、3島）各印一頁
+  handwritten12: { name: "手抄版", range: "B1:I38" },
+  handwritten3: { name: "手抄版", range: "L1:S38" },
   attendance: { name: "出勤表", range: "A1:J34", monthly: true }
 };
 function printPdfUrl_(ss, sh, range) {
   var base = ss.getUrl().replace(/\/edit.*$/, "");
   return base + "/export?format=pdf&gid=" + sh.getSheetId() + "&range=" + encodeURIComponent(range) +
-    "&size=A4&portrait=true&fitw=true&gridlines=false&printtitle=false&sheetnames=false&pagenum=UNDEFINED" +
+    "&size=A4&portrait=true&scale=4&gridlines=false&printtitle=false&sheetnames=false&pagenum=UNDEFINED" +
     "&horizontal_alignment=CENTER&top_margin=0.4&bottom_margin=0.4&left_margin=0.4&right_margin=0.4";
 }
 

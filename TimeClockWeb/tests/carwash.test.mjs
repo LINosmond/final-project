@@ -295,14 +295,15 @@ test('新的洗車分頁排在最後一個洗車分頁後面，不跑到列印�
 test('列印用表格：限管理員；回傳 A4 PDF 網址；出勤表換成指定年月', () => {
   const b = backend(emps, { extra: ['手抄版', '出勤表'] });
   assert.equal(b.call({ action: 'printSheetUrl', which: 'attendance', ym: '2027-02' }).ok, false);
-  const hw = b.call({ action: 'printSheetUrl', which: 'handwritten', ...A });
+  const hw = b.call({ action: 'printSheetUrl', which: 'handwritten12', ...A });
+  assert.match(b.call({ action: 'printSheetUrl', which: 'handwritten3', ...A }).url, /range=L1%3AS38&/);
   assert.equal(hw.ok, true);
-  assert.ok(hw.url.startsWith(`https://docs.google.com/spreadsheets/d/fixture/export?format=pdf&gid=${b.sheets['手抄版'].getSheetId()}&range=A1%3AS38&size=A4&portrait=true&fitw=true`));
+  assert.ok(hw.url.startsWith(`https://docs.google.com/spreadsheets/d/fixture/export?format=pdf&gid=${b.sheets['手抄版'].getSheetId()}&range=B1%3AI38&size=A4&portrait=true&scale=4`));
   const at = b.call({ action: 'printSheetUrl', which: 'attendance', ym: '2027-02', ...A });
   assert.equal(at.ok, true);
   assert.equal(b.sheets['出勤表'].get(1, 1), 2);
   assert.equal(b.sheets['出勤表'].get(4, 1), '=DATE(2027,A1,1)');
   assert.equal(b.call({ action: 'printSheetUrl', which: 'attendance', ym: 'x', ...A }).ok, false);
   assert.equal(b.call({ action: 'printSheetUrl', which: 'nope', ...A }).ok, false);
-  assert.equal(backend(emps).call({ action: 'printSheetUrl', which: 'handwritten', ...A }).ok, false); // 沒有分頁
+  assert.equal(backend(emps).call({ action: 'printSheetUrl', which: 'handwritten12', ...A }).ok, false); // 沒有分頁
 });
