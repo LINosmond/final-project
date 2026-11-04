@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { readAdminSnapshot, writeAdminSnapshot, clearAdminSnapshot } from "./startupSnapshot.js";
-import { isStandaloneApp, paperOf, pagesToPdf, sharePdf } from "./reportPdf.js";
+import { isStandaloneApp, paperOf, reportToPdfFile, sharePdf } from "./reportPdf.js";
 
 const FONT_IMPORT = "https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap";
 
@@ -1944,23 +1944,18 @@ function printReportHtml(html) {
   setTimeout(() => window.print(), 50);
 }
 
-// 報表做成 PDF：放進主畫面排版（被覆蓋層蓋住，看不到），每個 .page 截成一張 A4
+// 報表做成 PDF：在看不到的寬 iframe 裡排版後截圖，每個 .page 一張 A4
 async function reportToPdf(html) {
-  const { root, style, css } = mountReport(html);
-  try {
-    root.querySelectorAll(".noprint").forEach((x) => x.remove());
+  const css = Array.from(new DOMParser().parseFromString(html, "text/html").querySelectorAll("style")).map((x) => x.textContent).join("\n");
+  let title = "報表";
+  return await reportToPdfFile(html, paperOf(css), "", (doc) => {
+    doc.querySelectorAll(".noprint").forEach((x) => x.remove());
     // 拿掉報表為了塞進一張 A4 的 zoom／scale：PDF 工具處理縮放會讓表格框線錯位。改用原尺寸截圖，放進 PDF 時再等比例縮小。
-    root.querySelectorAll(".fit").forEach((el) => { el.style.zoom = ""; el.style.transform = ""; el.parentNode.style.height = ""; });
-    root.style.left = "0";
-    root.style.zIndex = "-1";
-    const title = (root.querySelector("h1")?.textContent || "報表").replace(/[\\/:*?"<>|\s]+/g, " ").trim();
-    let pages = Array.from(root.querySelectorAll(".page"));
-    if (!pages.length) pages = [root];
-    return await pagesToPdf(pages, paperOf(css), title + ".pdf");
-  } finally {
-    root.remove();
-    style.remove();
-  }
+    doc.querySelectorAll(".fit").forEach((el) => { el.style.zoom = ""; el.style.transform = ""; el.parentNode.style.height = ""; });
+    doc.documentElement.style.background = "#fff";
+    doc.body.style.background = "#fff";
+    title = (doc.querySelector("h1")?.textContent || "報表").replace(/[\\/:*?"<>|\s]+/g, " ").trim();
+  }).then((f) => new File([f], title + ".pdf", { type: "application/pdf" }));
 }
 
 // 報表改用「全螢幕覆蓋層＋iframe」顯示，而不是開新分頁：手機 Safari 開新分頁後沒有返回鍵、回不去。

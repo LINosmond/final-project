@@ -58,29 +58,44 @@ function trimWhite(canvas, pad) {
   return out;
 }
 
-// 把已排好版的報表（每個 .page 是一張 A4）轉成 PDF 檔
-export async function pagesToPdf(pages, paper, fileName) {
-  const [{ jsPDF }, { default: html2canvas }] = await Promise.all([import("jspdf"), import("html2canvas-pro")]);
+// 報表放進看不到的寬 iframe（1600px）裡單獨排版，每個 .page 截成一張圖。
+// 不在主畫面裡截：iPhone 螢幕窄、主畫面有覆蓋層和捲動，截出來會偏移或整張空白。
+export async function reportCanvases(html, prepare) {
+  const { default: html2canvas } = await import("html2canvas-pro");
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.cssText = "position:fixed;left:-20000px;top:0;width:1600px;height:1200px;border:0;visibility:hidden;";
+  document.body.appendChild(frame);
+  try {
+    await new Promise((ok) => { frame.onload = ok; frame.srcdoc = html; });
+    const doc = frame.contentDocument;
+    if (prepare) prepare(doc);
+    if (doc.fonts && doc.fonts.ready) await doc.fonts.ready;
+    await new Promise((ok) => setTimeout(ok, 50));
+    let pages = Array.from(doc.querySelectorAll(".page"));
+    if (!pages.length) pages = [doc.body];
+    const out = [];
+    for (const el of pages) {
+      const w = Math.ceil(el.scrollWidth), h = Math.ceil(el.scrollHeight);
+      const scale = Math.min(3, Math.sqrt(12e6 / (w * h))); // iPhone 畫布上限約 1600 萬像素，留餘裕
+      const shot = await html2canvas(el, { scale, backgroundColor: "#ffffff", logging: false, windowWidth: 1600, windowHeight: 1200 });
+      out.push(trimWhite(shot, Math.round(8 * scale)));
+    }
+    return out;
+  } finally {
+    frame.remove();
+  }
+}
+
+// 報表 HTML 轉成 PDF 檔（每個 .page 一張 A4）
+export async function reportToPdfFile(html, paper, fileName, prepare) {
+  const [{ jsPDF }, canvases] = await Promise.all([import("jspdf"), reportCanvases(html, prepare)]);
   const pdf = new jsPDF({ orientation: paper.landscape ? "landscape" : "portrait", unit: "mm", format: "a4" });
-  for (let i = 0; i < pages.length; i++) {
-    // iPhone 螢幕比報表窄，直接截報表會整張往左偏、切掉左邊。改成：用寬的虛擬視窗、指定座標，
-    // 四周多截一圈空白，再裁到實際有內容的範圍，放上紙張時置中。
-    const el = pages[i], r = el.getBoundingClientRect(), PAD = 200;
-    const x = r.left + window.scrollX - PAD, y = r.top + window.scrollY - 20;
-    const w = Math.ceil(r.width) + PAD * 2, h = Math.ceil(r.height) + 40;
-    const scale = Math.min(3, Math.sqrt(12e6 / (w * h))); // iPhone 畫布上限約 1600 萬像素，留餘裕
-    const shot = await html2canvas(el.ownerDocument.body, {
-      scale, backgroundColor: "#ffffff", logging: false,
-      x, y, width: w, height: h, scrollX: 0, scrollY: 0,
-      windowWidth: Math.max(1600, Math.ceil(x + w)), windowHeight: Math.max(1200, Math.ceil(y + h)),
-      onclone: (d) => { d.documentElement.style.background = "#fff"; d.body.style.background = "#fff"; },
-      ignoreElements: (n) => n.nodeType === 1 && n.parentNode === el.ownerDocument.body && !n.contains(el),
-    });
-    const canvas = trimWhite(shot, Math.round(8 * scale));
+  canvases.forEach((canvas, i) => {
     const p = placeOnPaper(paper, canvas.width, canvas.height);
     if (i > 0) pdf.addPage("a4", paper.landscape ? "landscape" : "portrait");
     pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", p.x, p.y, p.w, p.h);
-  }
+  });
   return new File([pdf.output("blob")], fileName, { type: "application/pdf" });
 }
 
