@@ -45,7 +45,7 @@ export function contentBox(data, width, height) {
 // 把截圖裁到有內容的範圍，四周留 pad 像素白邊
 function trimWhite(canvas, pad) {
   const b = contentBox(canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height);
-  if (!b) return canvas;
+  if (!b) return null; // 整張空白
   const sx = Math.max(0, b.left - pad), sy = Math.max(0, b.top - pad);
   const sw = Math.min(canvas.width, b.right + pad + 1) - sx, sh = Math.min(canvas.height, b.bottom + pad + 1) - sy;
   const out = document.createElement("canvas");
@@ -64,7 +64,7 @@ export async function reportCanvases(html, prepare) {
   const { default: html2canvas } = await import("html2canvas-pro");
   const frame = document.createElement("iframe");
   frame.setAttribute("aria-hidden", "true");
-  frame.style.cssText = "position:fixed;left:-20000px;top:0;width:1600px;height:1200px;border:0;visibility:hidden;";
+  frame.style.cssText = "position:fixed;left:-20000px;top:0;width:1600px;height:1200px;border:0;";
   document.body.appendChild(frame);
   try {
     await new Promise((ok) => { frame.onload = ok; frame.srcdoc = html; });
@@ -77,9 +77,18 @@ export async function reportCanvases(html, prepare) {
     const out = [];
     for (const el of pages) {
       const w = Math.ceil(el.scrollWidth), h = Math.ceil(el.scrollHeight);
-      const scale = Math.min(3, Math.sqrt(12e6 / (w * h))); // iPhone 畫布上限約 1600 萬像素，留餘裕
-      const shot = await html2canvas(el, { scale, backgroundColor: "#ffffff", logging: false, windowWidth: 1600, windowHeight: 1200 });
-      out.push(trimWhite(shot, Math.round(8 * scale)));
+      // iPhone 畫布記憶體不夠時會靜靜地給出整張空白：截到空白就降低解析度重試，還是空白就說清楚
+      const first = Math.min(2, Math.sqrt(6e6 / (w * h)));
+      let page = null, tried = [];
+      for (const scale of [first, first * 0.6, 1]) {
+        const shot = await html2canvas(el, { scale, backgroundColor: "#ffffff", logging: false, windowWidth: 1600, windowHeight: 1200 });
+        tried.push(`${shot.width}x${shot.height}`);
+        page = trimWhite(shot, Math.round(8 * scale));
+        shot.width = shot.height = 0; // 馬上釋放，iPhone 畫布記憶體很少
+        if (page) break;
+      }
+      if (!page) throw new Error(`報表截圖是空白（內容 ${w}x${h}，試過 ${tried.join("、")}）`);
+      out.push(page);
     }
     return out;
   } finally {
@@ -95,6 +104,7 @@ export async function reportToPdfFile(html, paper, fileName, prepare) {
     const p = placeOnPaper(paper, canvas.width, canvas.height);
     if (i > 0) pdf.addPage("a4", paper.landscape ? "landscape" : "portrait");
     pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", p.x, p.y, p.w, p.h);
+    canvas.width = canvas.height = 0;
   });
   return new File([pdf.output("blob")], fileName, { type: "application/pdf" });
 }
