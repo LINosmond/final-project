@@ -7,6 +7,7 @@ import { transformWithEsbuild } from 'vite';
 import React from 'react';
 import { webcrypto, createHash } from 'node:crypto';
 import * as snapshots from '../src/startupSnapshot.js';
+import * as printLink from '../src/printLink.js';
 import { create, act } from 'react-test-renderer';
 
 // Compile the real component in memory; tests never contact the live backend.
@@ -104,7 +105,7 @@ async function mountApp(t, { session = savedEmployee, data = fixtureData(), resp
   };
   const module = { exports: {} };
   const context = vm.createContext({
-    require: name => name === './startupSnapshot.js' ? snapshots : require(name), module, exports: module.exports, console,
+    require: name => name === './startupSnapshot.js' ? snapshots : name === './printLink.js' ? printLink : require(name), module, exports: module.exports, console,
     window: { storage, crypto: { subtle: { digest: async (_,bytes) => createHash('sha256').update(bytes).digest() } }, sessionStorage: {
       getItem: key => previewStore.get(key) ?? null,
       setItem: (key, value) => previewStore.set(key, value), removeItem: key => previewStore.delete(key),
