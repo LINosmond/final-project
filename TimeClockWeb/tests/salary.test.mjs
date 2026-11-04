@@ -13,6 +13,7 @@ const { code } = await transformWithEsbuild(source, 'App.jsx', { loader: 'jsx', 
 const generated = resolve('node_modules/.cache/timeclock-test/App.mjs');
 await fs.mkdir(resolve('node_modules/.cache/timeclock-test'), { recursive: true });
 await fs.copyFile(new URL('../src/startupSnapshot.js', import.meta.url), resolve('node_modules/.cache/timeclock-test/startupSnapshot.js'));
+await fs.copyFile(new URL('../src/printLink.js', import.meta.url), resolve('node_modules/.cache/timeclock-test/printLink.js'));
 await fs.writeFile(generated, code);
 const { default: App, SalaryPanel, salaryEffectiveRecord, salaryHoursOf, salaryCalc, computeMonthRows } = await import(pathToFileURL(generated));
 const { visibleDeclarationSnapshot, isCurrentEmployee, buildDeclarationSnapshot } = await import(pathToFileURL(generated));

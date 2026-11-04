@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { readAdminSnapshot, writeAdminSnapshot, clearAdminSnapshot } from "./startupSnapshot.js";
+import { isStandaloneApp, openReportInSafari } from "./printLink.js";
 
 const FONT_IMPORT = "https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap";
 
@@ -1953,7 +1954,7 @@ function showReportOverlay(html) {
   const prevOverflow = document.body.style.overflow;
   document.body.style.overflow = "hidden";
   back.onclick = () => { document.body.style.overflow = prevOverflow; wrap.remove(); };
-  pr.onclick = () => printReportHtml(html);
+  pr.onclick = () => { if (isStandaloneApp()) openReportInSafari(html).catch((e) => alert("無法交給 Safari 開啟：" + e)); else printReportHtml(html); };
   bar.append(back, pr);
   wrap.append(bar, frame);
   document.body.appendChild(wrap);
