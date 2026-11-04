@@ -2255,7 +2255,15 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
   const effectiveRecord = (e) => salaryEffectiveRecord(e, salary, punches, year, month, multiplier, overrides, carwashData);
   // 列印／匯出前重新讀洗車紀錄表：表是在 Google 試算表直接填的，網站先前讀到的可能是舊的或空的
   const freshCarwash = async () => {
-    try { return await loadCarwash(ym, true); } catch (e) { alert("洗車紀錄讀取失敗，洗車獎金先用目前畫面上的資料：" + ((e && e.message) || e)); return carwashData; }
+    let cw;
+    try { cw = await loadCarwash(ym, true); } catch (e) { alert("洗車紀錄讀取失敗，洗車獎金先用目前畫面上的資料：" + ((e && e.message) || e)); return carwashData; }
+    // 讀不到時講清楚原因，不要默默印出 0
+    if (!cw) alert(`試算表裡找不到「洗車 ${ym}」分頁，這個月的洗車獎金都會是 0。
+請確認分頁名稱是「洗車 ${ym}」（洗車與日期中間一個空格）。`);
+    else if (!Object.keys(cw.units || {}).length) alert(`「洗車 ${ym}」分頁讀到了，但沒有讀到任何人的洗車數量，洗車獎金都會是 0。`);
+    if (cw && cw.unknown && cw.unknown.length) alert(`洗車表上這些姓名對不到員工名單，他們的洗車獎金沒算進去：${cw.unknown.join("、")}
+姓名要和網站上的員工姓名完全一樣。`);
+    return cw;
   };
 
   // 只在「該員工的薪資內容真的改變」時才重設表單（用內容字串比對，而非物件參照）。
