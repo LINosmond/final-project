@@ -2320,7 +2320,7 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
       const rec = effectiveRecord(e);
       const cc = calc(rec);
       const rows = [
-        ["序號", i + 1], ["職務", rec.position || "一般"], ["姓名", e.name],
+        ["薪資月份", `${year}/${month}`], ["職務", rec.position || "一般"], ["姓名", e.name],
         ["工作時數", num(rec.workHours)], ["時薪單價", num(rec.hourlyRate)],
         ["加班時數", num(rec.otHours)], ["加班時薪", num(rec.otRate)],
         ["洗車獎金", num(rec.carWash)], ["職務加級", num(rec.dutyAllowance)], ["特別獎金", num(rec.specialBonus)],
