@@ -30,7 +30,7 @@ export async function pagesToPdf(pages, paper, fileName) {
   const [{ jsPDF }, { default: html2canvas }] = await Promise.all([import("jspdf"), import("html2canvas-pro")]);
   const pdf = new jsPDF({ orientation: paper.landscape ? "landscape" : "portrait", unit: "mm", format: "a4" });
   for (let i = 0; i < pages.length; i++) {
-    const canvas = await html2canvas(pages[i], { scale: 2, backgroundColor: "#ffffff", logging: false });
+    const canvas = await html2canvas(pages[i], { scale: 3, backgroundColor: "#ffffff", logging: false });
     const p = placeOnPaper(paper, canvas.width, canvas.height);
     if (i > 0) pdf.addPage("a4", paper.landscape ? "landscape" : "portrait");
     pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", p.x, p.y, p.w, p.h);

@@ -1949,6 +1949,8 @@ async function reportToPdf(html) {
   const { root, style, css } = mountReport(html);
   try {
     root.querySelectorAll(".noprint").forEach((x) => x.remove());
+    // 拿掉報表為了塞進一張 A4 的 zoom／scale：PDF 工具處理縮放會讓表格框線錯位。改用原尺寸截圖，放進 PDF 時再等比例縮小。
+    root.querySelectorAll(".fit").forEach((el) => { el.style.zoom = ""; el.style.transform = ""; el.parentNode.style.height = ""; });
     root.style.left = "0";
     root.style.zIndex = "-1";
     const title = (root.querySelector("h1")?.textContent || "報表").replace(/[\\/:*?"<>|\s]+/g, " ").trim();
