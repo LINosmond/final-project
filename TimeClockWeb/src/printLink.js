@@ -45,17 +45,9 @@ export function withPrintBar(html) {
   return /<body[^>]*>/i.test(html) ? html.replace(/<body[^>]*>/i, (m) => m + bar) : bar + html;
 }
 
-// 在網頁 App 裡：用 Safari 開啟報表；Safari 沒被叫出來（畫面沒切走）就改用一般開新頁
-export async function openReportInSafari(html) {
-  const url = location.origin + location.pathname + PRINT_HASH + (await encodeReport(html));
-  let left = false;
-  const onHide = () => { if (document.visibilityState === "hidden") left = true; };
-  document.addEventListener("visibilitychange", onHide);
-  location.href = "x-safari-" + url;
-  setTimeout(() => {
-    document.removeEventListener("visibilitychange", onHide);
-    if (!left) window.open(url, "_blank");
-  }, 1500);
+// 報表的列印網址（同一個網站加上 #tcprint=…），在 Safari 打開後只顯示報表
+export async function reportPrintUrl(html) {
+  return location.origin + location.pathname + PRINT_HASH + (await encodeReport(html));
 }
 
 // 網址帶 #tcprint=… 時，整頁換成報表；回傳 true 表示不要再載入打卡系統

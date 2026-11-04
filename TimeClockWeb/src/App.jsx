@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { readAdminSnapshot, writeAdminSnapshot, clearAdminSnapshot } from "./startupSnapshot.js";
-import { isStandaloneApp, openReportInSafari } from "./printLink.js";
+import { isStandaloneApp, reportPrintUrl } from "./printLink.js";
 
 const FONT_IMPORT = "https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap";
 
@@ -1954,8 +1954,20 @@ function showReportOverlay(html) {
   const prevOverflow = document.body.style.overflow;
   document.body.style.overflow = "hidden";
   back.onclick = () => { document.body.style.overflow = prevOverflow; wrap.remove(); };
-  pr.onclick = () => { if (isStandaloneApp()) openReportInSafari(html).catch((e) => alert("無法交給 Safari 開啟：" + e)); else printReportHtml(html); };
-  bar.append(back, pr);
+  let printBtn = pr;
+  if (isStandaloneApp()) {
+    // 主畫面圖示打開的網頁 App 不能列印：按鈕改成「另開 Safari」的連結（要使用者親手點連結，才不會被擋）
+    printBtn = document.createElement("a");
+    printBtn.target = "_blank";
+    printBtn.rel = "noopener";
+    printBtn.style.cssText = pr.style.cssText + "text-decoration:none;display:inline-block;opacity:.5;";
+    printBtn.textContent = "準備列印中…";
+    reportPrintUrl(html).then((url) => { printBtn.href = url; printBtn.textContent = "🖨 用 Safari 列印"; printBtn.style.opacity = "1"; })
+      .catch((e) => { printBtn.textContent = "無法列印：" + e; });
+  } else {
+    pr.onclick = () => printReportHtml(html);
+  }
+  bar.append(back, printBtn);
   wrap.append(bar, frame);
   document.body.appendChild(wrap);
 }
