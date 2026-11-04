@@ -12,7 +12,7 @@ const { code } = await transformWithEsbuild(source, 'App.jsx', { loader: 'jsx', 
 const dir = resolve('node_modules/.cache/timeclock-test-clockin');
 await fs.mkdir(dir, { recursive: true });
 await fs.copyFile(new URL('../src/startupSnapshot.js', import.meta.url), resolve(dir, 'startupSnapshot.js'));
-await fs.copyFile(new URL('../src/printLink.js', import.meta.url), resolve(dir, 'printLink.js'));
+await fs.copyFile(new URL('../src/reportPdf.js', import.meta.url), resolve(dir, 'reportPdf.js'));
 await fs.writeFile(resolve(dir, 'App.mjs'), code);
 const { canPickEarlierSlot, CLOCK_IN_EARLIER_GRACE_MS } = await import(pathToFileURL(resolve(dir, 'App.mjs')));
 

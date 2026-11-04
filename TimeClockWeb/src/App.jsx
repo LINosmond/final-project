@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { readAdminSnapshot, writeAdminSnapshot, clearAdminSnapshot } from "./startupSnapshot.js";
-import { isStandaloneApp, reportPrintUrl, safariUrl } from "./printLink.js";
+import { isStandaloneApp, paperOf, pagesToPdf, sharePdf } from "./reportPdf.js";
 
 const FONT_IMPORT = "https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap";
 
@@ -1911,7 +1911,7 @@ function salaryCalc(rec) {
 
 // 列印報表：iPhone Safari 不支援呼叫 iframe 的 print()（按了沒反應），改把報表放進主畫面再列印整頁。
 // 報表先放在畫面外、照紙張寬度排版並執行報表自己的 fitPages 縮放；列印時只顯示報表，印完移除。
-function printReportHtml(html) {
+function mountReport(html) {
   const doc = new DOMParser().parseFromString(html, "text/html");
   const css = Array.from(doc.querySelectorAll("style")).map((x) => x.textContent).join("\n");
   const landscape = /@page\s*\{[^}]*landscape/.test(css);
@@ -1934,9 +1934,31 @@ function printReportHtml(html) {
   if (/function fitPages/.test(code)) {
     try { new Function("document", "window", code + "\nfitPages();")({ querySelectorAll: (q) => root.querySelectorAll(q) }, {}); } catch (e) { /* 縮放失敗仍照原尺寸列印 */ }
   }
+  return { root, style, css };
+}
+
+function printReportHtml(html) {
+  const { root, style } = mountReport(html);
   const cleanup = () => { window.removeEventListener("afterprint", cleanup); root.remove(); style.remove(); };
   window.addEventListener("afterprint", cleanup);
   setTimeout(() => window.print(), 50);
+}
+
+// 報表做成 PDF：放進主畫面排版（被覆蓋層蓋住，看不到），每個 .page 截成一張 A4
+async function reportToPdf(html) {
+  const { root, style, css } = mountReport(html);
+  try {
+    root.querySelectorAll(".noprint").forEach((x) => x.remove());
+    root.style.left = "0";
+    root.style.zIndex = "-1";
+    const title = (root.querySelector("h1")?.textContent || "報表").replace(/[\\/:*?"<>|\s]+/g, " ").trim();
+    let pages = Array.from(root.querySelectorAll(".page"));
+    if (!pages.length) pages = [root];
+    return await pagesToPdf(pages, paperOf(css), title + ".pdf");
+  } finally {
+    root.remove();
+    style.remove();
+  }
 }
 
 // 報表改用「全螢幕覆蓋層＋iframe」顯示，而不是開新分頁：手機 Safari 開新分頁後沒有返回鍵、回不去。
@@ -1954,18 +1976,19 @@ function showReportOverlay(html) {
   const prevOverflow = document.body.style.overflow;
   document.body.style.overflow = "hidden";
   back.onclick = () => { document.body.style.overflow = prevOverflow; wrap.remove(); };
-  let printBtn = pr;
   if (isStandaloneApp()) {
-    // 主畫面圖示打開的網頁 App 不能列印：按鈕改成「另開 Safari」的連結（要使用者親手點連結，才不會被擋）
-    printBtn = document.createElement("a");
-    printBtn.style.cssText = pr.style.cssText + "text-decoration:none;display:inline-block;opacity:.5;";
-    printBtn.textContent = "準備列印中…";
-    reportPrintUrl(html).then((url) => { printBtn.href = safariUrl(url); printBtn.textContent = "🖨 用 Safari 列印"; printBtn.style.opacity = "1"; })
-      .catch((e) => { printBtn.textContent = "無法列印：" + e; });
+    // 主畫面圖示打開的網頁 App 不能列印：先在手機上把報表做成 PDF，做好後按鈕改成「分享 / 列印 PDF」。
+    // 分享選單一定要使用者親手按才會開，所以做 PDF 和分享分成兩步。
+    let file = null;
+    pr.disabled = true;
+    pr.textContent = "PDF 製作中…";
+    reportToPdf(html).then((f) => { file = f; pr.disabled = false; pr.textContent = "📤 分享 / 列印 PDF"; })
+      .catch((e) => { pr.textContent = "PDF 製作失敗"; alert("PDF 製作失敗：" + (e && e.message ? e.message : e)); });
+    pr.onclick = () => { if (file) sharePdf(file).catch((e) => alert("無法分享 PDF：" + (e && e.message ? e.message : e))); };
   } else {
     pr.onclick = () => printReportHtml(html);
   }
-  bar.append(back, printBtn);
+  bar.append(back, pr);
   wrap.append(bar, frame);
   document.body.appendChild(wrap);
 }
