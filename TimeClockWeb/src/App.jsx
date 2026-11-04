@@ -1985,7 +1985,17 @@ function showReportOverlay(html) {
     pr.disabled = true;
     pr.textContent = "PDF 製作中…";
     reportToPdf(html).then((f) => { file = f; pr.disabled = false; pr.textContent = "📤 分享 / 列印 PDF"; })
-      .catch((e) => { pr.textContent = "PDF 製作失敗"; alert("PDF 製作失敗：" + (e && e.message ? e.message : e)); });
+      .catch((e) => {
+        pr.textContent = "PDF 製作失敗";
+        const msg = e && e.message ? e.message : String(e);
+        // 手機還開著舊版網站時，舊版要找的 PDF 工具檔已被新版取代，會載入失敗：重新載入網站就好
+        if (/module|import|fetch/i.test(msg)) {
+          alert("網站剛更新過，按「關閉」後會重新載入網站，請再按一次列印。");
+          location.reload();
+        } else {
+          alert("PDF 製作失敗：" + msg);
+        }
+      });
     pr.onclick = () => { if (file) sharePdf(file).catch((e) => alert("無法分享 PDF：" + (e && e.message ? e.message : e))); };
   } else {
     pr.onclick = () => printReportHtml(html);
