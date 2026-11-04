@@ -15,3 +15,12 @@ test('PDF 擺放：寬度貼齊可印範圍，太高時等比例縮小並置中'
   const b = placeOnPaper(paper, 1000, 5700);
   assert.ok(Math.abs(b.h - 285) < 1e-9 && b.w < 198 && Math.abs(b.x - (210 - b.w) / 2) < 1e-9);
 });
+
+test('PDF 裁白邊：找出非白色範圍', async () => {
+  const { contentBox } = await import('../src/reportPdf.js');
+  const w = 10, h = 6, d = new Uint8ClampedArray(w * h * 4).fill(255);
+  const dot = (x, y) => { const k = (y * w + x) * 4; d[k] = d[k + 1] = d[k + 2] = 0; };
+  dot(3, 1); dot(7, 4);
+  assert.deepEqual(contentBox(d, w, h), { left: 3, top: 1, right: 7, bottom: 4 });
+  assert.equal(contentBox(new Uint8ClampedArray(w * h * 4).fill(255), w, h), null);
+});
