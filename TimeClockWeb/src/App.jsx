@@ -1908,6 +1908,36 @@ function salaryCalc(rec) {
   return { gross, net, netRounded: Math.ceil(net / 100) * 100 };
 }
 
+// 列印報表：iPhone Safari 不支援呼叫 iframe 的 print()（按了沒反應），改把報表放進主畫面再列印整頁。
+// 報表先放在畫面外、照紙張寬度排版並執行報表自己的 fitPages 縮放；列印時只顯示報表，印完移除。
+function printReportHtml(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const css = Array.from(doc.querySelectorAll("style")).map((x) => x.textContent).join("\n");
+  const landscape = /@page\s*\{[^}]*landscape/.test(css);
+  document.getElementById("tc-print-root")?.remove();
+  document.getElementById("tc-print-style")?.remove();
+  const style = document.createElement("style");
+  style.id = "tc-print-style";
+  style.textContent = css.replace(/(^|[}\s,])(html|body)(?=\s*[{,])/g, "$1#tc-print-root") +
+    `\n#tc-print-root{position:absolute;left:-10000px;top:0;width:${landscape ? 281 : 198}mm;background:#fff;}` +
+    "\n@media print{html,body{background:#fff!important;height:auto!important;overflow:visible!important;}" +
+    "body>*:not(#tc-print-root){display:none!important;}#tc-print-root{position:static!important;left:auto!important;}}";
+  const root = document.createElement("div");
+  root.id = "tc-print-root";
+  root.innerHTML = doc.body.innerHTML;
+  root.querySelectorAll("script").forEach((x) => x.remove());
+  document.head.appendChild(style);
+  document.body.appendChild(root);
+  // 執行報表自己的縮放程式，只讓它看得到報表（document 換成報表範圍、window.onload 不動到主畫面）
+  const code = Array.from(doc.querySelectorAll("script")).map((x) => x.textContent).join("\n");
+  if (/function fitPages/.test(code)) {
+    try { new Function("document", "window", code + "\nfitPages();")({ querySelectorAll: (q) => root.querySelectorAll(q) }, {}); } catch (e) { /* 縮放失敗仍照原尺寸列印 */ }
+  }
+  const cleanup = () => { window.removeEventListener("afterprint", cleanup); root.remove(); style.remove(); };
+  window.addEventListener("afterprint", cleanup);
+  setTimeout(() => window.print(), 50);
+}
+
 // 報表改用「全螢幕覆蓋層＋iframe」顯示，而不是開新分頁：手機 Safari 開新分頁後沒有返回鍵、回不去。
 // 覆蓋層頂端固定「返回」與「列印」鈕，返回只是把覆蓋層移除，回到原本的系統畫面。
 function showReportOverlay(html) {
@@ -1923,7 +1953,7 @@ function showReportOverlay(html) {
   const prevOverflow = document.body.style.overflow;
   document.body.style.overflow = "hidden";
   back.onclick = () => { document.body.style.overflow = prevOverflow; wrap.remove(); };
-  pr.onclick = () => { try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch (e) { window.print(); } };
+  pr.onclick = () => printReportHtml(html);
   bar.append(back, pr);
   wrap.append(bar, frame);
   document.body.appendChild(wrap);
