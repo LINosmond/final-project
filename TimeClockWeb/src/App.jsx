@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { readAdminSnapshot, writeAdminSnapshot, clearAdminSnapshot } from "./startupSnapshot.js";
-import { isStandaloneApp, paperOf, reportToPdfFile, sharePdf } from "./reportPdf.js";
+import { isStandaloneApp, reportHtmlToPdf, sharePdf } from "./reportPdf.js";
 
 const FONT_IMPORT = "https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap";
 
@@ -1934,7 +1934,7 @@ function mountReport(html) {
   if (/function fitPages/.test(code)) {
     try { new Function("document", "window", code + "\nfitPages();")({ querySelectorAll: (q) => root.querySelectorAll(q) }, {}); } catch (e) { /* 縮放失敗仍照原尺寸列印 */ }
   }
-  return { root, style, css };
+  return { root, style };
 }
 
 function printReportHtml(html) {
@@ -1942,20 +1942,6 @@ function printReportHtml(html) {
   const cleanup = () => { window.removeEventListener("afterprint", cleanup); root.remove(); style.remove(); };
   window.addEventListener("afterprint", cleanup);
   setTimeout(() => window.print(), 50);
-}
-
-// 報表做成 PDF：在看不到的寬 iframe 裡排版後截圖，每個 .page 一張 A4
-async function reportToPdf(html) {
-  const css = Array.from(new DOMParser().parseFromString(html, "text/html").querySelectorAll("style")).map((x) => x.textContent).join("\n");
-  let title = "報表";
-  return await reportToPdfFile(html, paperOf(css), "", (doc) => {
-    doc.querySelectorAll(".noprint").forEach((x) => x.remove());
-    // 拿掉報表為了塞進一張 A4 的 zoom／scale：PDF 工具處理縮放會讓表格框線錯位。改用原尺寸截圖，放進 PDF 時再等比例縮小。
-    doc.querySelectorAll(".fit").forEach((el) => { el.style.zoom = ""; el.style.transform = ""; el.parentNode.style.height = ""; });
-    doc.documentElement.style.background = "#fff";
-    doc.body.style.background = "#fff";
-    title = (doc.querySelector("h1")?.textContent || "報表").replace(/[\\/:*?"<>|\s]+/g, " ").trim();
-  }).then((f) => new File([f], title + ".pdf", { type: "application/pdf" }));
 }
 
 // 報表改用「全螢幕覆蓋層＋iframe」顯示，而不是開新分頁：手機 Safari 開新分頁後沒有返回鍵、回不去。
@@ -1979,7 +1965,7 @@ function showReportOverlay(html) {
     let file = null;
     pr.disabled = true;
     pr.textContent = "PDF 製作中…";
-    reportToPdf(html).then((f) => { file = f; pr.disabled = false; pr.textContent = "📤 分享 / 列印 PDF"; })
+    reportHtmlToPdf(html).then((f) => { file = f; pr.disabled = false; pr.textContent = "📤 分享 / 列印 PDF"; })
       .catch((e) => {
         pr.textContent = "PDF 製作失敗";
         const msg = e && e.message ? e.message : String(e);
@@ -2247,17 +2233,22 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
   const attendance = useMemo(() => (emp ? salaryHoursOf(emp, punches, year, month, multiplier, overrides) : { work: 0, ot: 0 }), [emp, punches, year, month, multiplier, holidays]);
   const { data: carwashData } = useCarwash(ym);
   const cwBonus = carwashBonusOf(carwashData, employeeId);
-  const effectiveRecord = (e) => salaryEffectiveRecord(e, salary, punches, year, month, multiplier, overrides, carwashData);
-  // 列印／匯出前重新讀洗車紀錄表：表是在 Google 試算表直接填的，網站先前讀到的可能是舊的或空的
+  const effectiveRecord = (e, cw = carwashData) => salaryEffectiveRecord(e, salary, punches, year, month, multiplier, overrides, cw);
+  // 列印／匯出前重新讀洗車紀錄表：表是在 Google 試算表直接填的，網站先前讀到的可能是舊的或空的。
+  // 讀取要幾秒，期間停用列印／匯出鈕，避免連按開出好幾個報表。
+  const [readingCw, setReadingCw] = useState(false);
   const freshCarwash = async () => {
+    setReadingCw(true);
     let cw;
-    try { cw = await loadCarwash(ym, true); } catch (e) { alert("洗車紀錄讀取失敗，洗車獎金先用目前畫面上的資料：" + ((e && e.message) || e)); return carwashData; }
-    // 讀不到時講清楚原因，不要默默印出 0
-    if (!cw) alert(`試算表裡找不到「洗車 ${ym}」分頁，這個月的洗車獎金都會是 0。
-請確認分頁名稱是「洗車 ${ym}」（洗車與日期中間一個空格）。`);
-    else if (!Object.keys(cw.units || {}).length) alert(`「洗車 ${ym}」分頁讀到了，但沒有讀到任何人的洗車數量，洗車獎金都會是 0。`);
-    if (cw && cw.unknown && cw.unknown.length) alert(`洗車表上這些姓名對不到員工名單，他們的洗車獎金沒算進去：${cw.unknown.join("、")}
-姓名要和網站上的員工姓名完全一樣。`);
+    try { cw = await loadCarwash(ym, true); }
+    catch (e) { alert("洗車紀錄讀取失敗，洗車獎金先用目前畫面上的資料：" + ((e && e.message) || e)); return carwashData; }
+    finally { setReadingCw(false); }
+    // 讀不到時講清楚原因，不要默默印出 0；一次說完（iPhone 每個提示都要按一次）
+    const warn = [];
+    if (!cw) warn.push(`試算表裡找不到「洗車 ${ym}」分頁（洗車與日期中間一個空格），沒有手動填洗車獎金的人會是 0。`);
+    else if (!Object.keys(cw.units || {}).length) warn.push(`「洗車 ${ym}」分頁裡沒有任何人的洗車數量，沒有手動填洗車獎金的人會是 0。`);
+    if (cw && cw.unknown && cw.unknown.length) warn.push(`洗車表上這些姓名對不到員工名單，洗車獎金沒算進去：${cw.unknown.join("、")}（姓名要和網站上的完全一樣）`);
+    if (warn.length) alert(warn.join("\n\n"));
     return cw;
   };
 
@@ -2325,7 +2316,7 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
     const cw = await freshCarwash();
     const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const cards = employees.map((e, i) => {
-      const rec = salaryEffectiveRecord(e, salary, punches, year, month, multiplier, overrides, cw);
+      const rec = effectiveRecord(e, cw);
       const cc = calc(rec);
       const rows = [
         ["薪資月份", `${year}/${month}`], ["職務", rec.position || "一般"], ["姓名", e.name],
@@ -2382,7 +2373,7 @@ window.onload=function(){setTimeout(function(){fitPages();},500);};
     const cw = await freshCarwash();
     const header = ["序號", "姓名", "職務", "工作時數", "時薪單價", "加班時數", "加班時薪", "洗車獎金", "職務加級", "特別獎金", "應發金額", "勞保", "健保", "借支", "實發金額"];
     const body = employees.map((e, i) => {
-      const rec = salaryEffectiveRecord(e, salary, punches, year, month, multiplier, overrides, cw);
+      const rec = effectiveRecord(e, cw);
       const cc = calc(rec);
       return [i + 1, e.name, rec.position || "", num(rec.workHours), num(rec.hourlyRate), num(rec.otHours), num(rec.otRate), num(rec.carWash), num(rec.dutyAllowance), num(rec.specialBonus), cc.gross, num(rec.laborIns), num(rec.healthIns), num(rec.advance), cc.netRounded];
     });
@@ -2451,12 +2442,12 @@ window.onload=function(){setTimeout(function(){fitPages();},500);};
         </div>
       </fieldset>
 
-      <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 6 }}>全員薪資總表（{year} 年 {month} 月）</div>
+      <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 6 }}>全員薪資總表（{year} 年 {month} 月）{readingCw ? "　讀取洗車紀錄中…" : ""}</div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button onClick={printSalarySummary} disabled={saving} style={{ flex: 1, minWidth: 150, padding: "11px 0", borderRadius: 8, border: "none", background: COLORS.cardBlue, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+        <button onClick={printSalarySummary} disabled={saving || readingCw} style={{ flex: 1, minWidth: 150, padding: "11px 0", borderRadius: 8, border: "none", background: COLORS.cardBlue, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
           🖨 列印總表（A4）
         </button>
-        <button onClick={exportSalaryCsv} disabled={saving} style={{ flex: 1, minWidth: 150, padding: "11px 0", borderRadius: 8, border: `1px solid ${COLORS.brassDim}`, background: "none", color: COLORS.brass, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+        <button onClick={exportSalaryCsv} disabled={saving || readingCw} style={{ flex: 1, minWidth: 150, padding: "11px 0", borderRadius: 8, border: `1px solid ${COLORS.brassDim}`, background: "none", color: COLORS.brass, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
           ⤓ 匯出總表 CSV
         </button>
       </div>

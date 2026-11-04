@@ -1,7 +1,7 @@
 // 網頁 App 列印改做 PDF：紙張方向、邊界與每頁圖片的擺放。
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { paperOf, placeOnPaper } from '../src/reportPdf.js';
+import { paperOf, placeOnPaper, contentBox } from '../src/reportPdf.js';
 
 test('PDF 紙張：讀報表 @page 的方向與邊界', () => {
   assert.deepEqual(paperOf('@page { size: A4 portrait; margin: 6mm; } body{}'), { landscape: false, margin: 6, w: 210, h: 297 });
@@ -16,8 +16,7 @@ test('PDF 擺放：寬度貼齊可印範圍，太高時等比例縮小並置中'
   assert.ok(Math.abs(b.h - 285) < 1e-9 && b.w < 198 && Math.abs(b.x - (210 - b.w) / 2) < 1e-9);
 });
 
-test('PDF 裁白邊：找出非白色範圍', async () => {
-  const { contentBox } = await import('../src/reportPdf.js');
+test('PDF 裁白邊：找出非白色範圍', () => {
   const w = 10, h = 6, d = new Uint8ClampedArray(w * h * 4).fill(255);
   const dot = (x, y) => { const k = (y * w + x) * 4; d[k] = d[k + 1] = d[k + 2] = 0; };
   dot(3, 1); dot(7, 4);
