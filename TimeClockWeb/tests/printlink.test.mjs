@@ -16,3 +16,8 @@ test('報表網址：在 body 開頭加上列印按鈕，列印時隱藏', () =>
   assert.ok(out.startsWith('<html><body class="x"><style>@media print{.tc-safari-bar'));
   assert.ok(out.includes('window.print()') && out.endsWith('<p>表</p></body></html>'));
 });
+
+test('報表網址：還在網頁 App 裡時，按鈕改成 x-safari 連結', () => {
+  const out = withPrintBar('<body><p>表</p></body>', 'x-safari-https://a.b/c#tcprint=x"y');
+  assert.ok(out.includes('href="x-safari-https://a.b/c#tcprint=x&quot;y"') && !out.includes('window.print()'));
+});
