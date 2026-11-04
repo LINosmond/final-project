@@ -124,6 +124,19 @@ test('儲存不固定工時、連點只送一次；列印／CSV使用最新考�
   finally { URL.createObjectURL = oldCreate; URL.revokeObjectURL = oldRevoke; await act(async () => view.unmount()); }
 });
 
+test('列印總表頁尾：總薪資＝備註合計，1000／500／100 張數每人分開換再加總', async () => {
+  const a = { id: 'a', name: 'A', status: 'active' }, b = { id: 'b', name: 'B', status: 'active' };
+  const s = { a: { [ym]: { position: '月薪', hourlyRate: 1500 } }, b: { [ym]: { position: '月薪', hourlyRate: 1500 } } };
+  let html = '', view;
+  global.window = { storage: { getCarwash: async () => ({ rate: 8, units: { a: {} } }) } };
+  global.document = { createElement: () => ({ style: {}, append() {}, remove() {}, set srcdoc(v) { html = v; } }), body: { style: {}, appendChild() {} } };
+  await act(async () => { view = create(React.createElement(SalaryPanel, { ...props, employees: [a, b], punches: [], salary: s })); });
+  await act(async () => { await button(view, '列印總表').props.onClick(); });
+  // 兩人各 1500：每人 1000×1＋500×1，合計 1000×2、500×2（不是整筆 3000 換成 1000×3）
+  assert.match(html, /<td>3,000<\/td><td>2 張<\/td><td>2 張<\/td><td>0 張<\/td>/);
+  await act(async () => view.unmount());
+});
+
 test('薪資寫入成功前不報成功，失敗不覆蓋原資料，可重試', async () => {
   let resolveWrite, rejectWrite, view;
   global.window = { storage: {

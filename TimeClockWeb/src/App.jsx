@@ -2315,9 +2315,15 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
   const printSalarySummary = async () => {
     const cw = await freshCarwash();
     const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    // 頁尾合計：總薪資＝每人備註（實發進位到百元）加總；鈔票張數每人分開換再加總（每人一個薪資袋，一張 1000 不能拆給兩個人）
+    let total = 0;
+    const bills = { 1000: 0, 500: 0, 100: 0 };
     const cards = employees.map((e, i) => {
       const rec = effectiveRecord(e, cw);
       const cc = calc(rec);
+      let pay = Math.max(0, cc.netRounded);
+      total += pay;
+      for (const b of [1000, 500, 100]) { bills[b] += Math.floor(pay / b); pay %= b; }
       const rows = [
         ["薪資月份", `${year}/${month}`], ["職務", rec.position || "一般"], ["姓名", e.name],
         ["工作時數", num(rec.workHours)], ["時薪單價", num(rec.hourlyRate)],
@@ -2343,6 +2349,9 @@ table.card th, table.card td { border:1px solid #333; padding:3px 3px; line-heig
 table.card th { background:#eee; font-weight:bold; white-space:nowrap; width:50%; }
 table.card td { font-variant-numeric:tabular-nums; font-weight:bold; }
 table.card tr.hl th, table.card tr.hl td { font-weight:bold; background:#f3f3f3; }
+table.sum { border-collapse:collapse; margin:16px auto 0; font-size:16px; font-weight:bold; }
+table.sum th, table.sum td { border:1px solid #333; padding:4px 16px; text-align:center; font-variant-numeric:tabular-nums; }
+table.sum th { background:#eee; }
 .noprint { text-align:center; margin-top:12px; }
 @media print { .noprint { display:none; } }
 </style></head>
@@ -2350,6 +2359,8 @@ table.card tr.hl th, table.card tr.hl td { font-weight:bold; background:#f3f3f3;
 <div class="page"><div class="fit">
 <h1>${year} 年 ${month} 月　薪資表</h1>
 <div class="grid">${cards}</div>
+<table class="sum"><tr><th>總薪資（備註合計）</th><th>1000 元</th><th>500 元</th><th>100 元</th></tr>
+<tr><td>${total.toLocaleString("en-US")}</td><td>${bills[1000]} 張</td><td>${bills[500]} 張</td><td>${bills[100]} 張</td></tr></table>
 </div></div>
 <div class="noprint"><button onclick="window.print()" style="padding:8px 22px;font-size:14px;cursor:pointer;">列印 / 存成 PDF</button></div>
 <script>
