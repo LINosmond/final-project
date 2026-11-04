@@ -111,13 +111,16 @@ test('儲存不固定工時、連點只送一次；列印／CSV使用最新考�
   // 報表改在頁內全螢幕覆蓋層（iframe srcdoc）顯示，避免手機 Safari 開新分頁後無法返回
   const el = () => ({ style: {}, append() {}, remove() {}, set srcdoc(v) { html = v; } });
   global.document = { createElement: el, body: { style: {}, appendChild() {} } };
-  act(() => button(view, '列印總表').props.onClick());
+  // 列印前會重新讀洗車紀錄表（試算表直接填的），洗車獎金要用讀到的最新資料
+  global.window = { storage: { getCarwash: async () => ({ rate: 8, units: { test: { 1: 10, 2: 5.5 } } }) } };
+  await act(async () => { await button(view, '列印總表').props.onClick(); });
+  assert.match(html, /<th>洗車獎金<\/th><td>124<\/td>/); // (10+5.5)×8
   assert.match(html, /<th>工作時數<\/th><td>8<\/td>/);
   assert.match(html, /<th>加班時數<\/th><td>2<\/td>/);
   const oldCreate = URL.createObjectURL, oldRevoke = URL.revokeObjectURL;
   URL.createObjectURL = blob => { csvBlob = blob; return 'blob:test'; }; URL.revokeObjectURL = () => {};
   global.document = { createElement: () => ({ click() {}, remove() {} }), body: { appendChild() {}, removeChild() {} } };
-  try { act(() => button(view, '匯出總表').props.onClick()); assert.match(await csvBlob.text(), /1,Test,,8,200,2,300/); }
+  try { await act(async () => { await button(view, '匯出總表').props.onClick(); }); assert.match(await csvBlob.text(), /1,Test,,8,200,2,300/); }
   finally { URL.createObjectURL = oldCreate; URL.revokeObjectURL = oldRevoke; await act(async () => view.unmount()); }
 });
 

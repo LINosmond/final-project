@@ -2253,6 +2253,10 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
   const { data: carwashData } = useCarwash(ym);
   const cwBonus = carwashBonusOf(carwashData, employeeId);
   const effectiveRecord = (e) => salaryEffectiveRecord(e, salary, punches, year, month, multiplier, overrides, carwashData);
+  // 列印／匯出前重新讀洗車紀錄表：表是在 Google 試算表直接填的，網站先前讀到的可能是舊的或空的
+  const freshCarwash = async () => {
+    try { return await loadCarwash(ym, true); } catch (e) { alert("洗車紀錄讀取失敗，洗車獎金先用目前畫面上的資料：" + ((e && e.message) || e)); return carwashData; }
+  };
 
   // 只在「該員工的薪資內容真的改變」時才重設表單（用內容字串比對，而非物件參照）。
   // 這樣每 6 秒輪詢即使產生新的 salary 物件，只要內容沒變就不會把使用者還沒儲存的輸入清掉。
@@ -2314,10 +2318,11 @@ function SalaryPanel({ employees, punches, holidays, otMultiplier, salary, onSav
   };
 
   // 全員薪資總表：比照原本 Excel「列印」分頁——每位員工一張直式薪資單、並排成格狀，A4 直式一次印出（也可存 PDF）
-  const printSalarySummary = () => {
+  const printSalarySummary = async () => {
+    const cw = await freshCarwash();
     const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const cards = employees.map((e, i) => {
-      const rec = effectiveRecord(e);
+      const rec = salaryEffectiveRecord(e, salary, punches, year, month, multiplier, overrides, cw);
       const cc = calc(rec);
       const rows = [
         ["薪資月份", `${year}/${month}`], ["職務", rec.position || "一般"], ["姓名", e.name],
@@ -2370,10 +2375,11 @@ window.onload=function(){setTimeout(function(){fitPages();},500);};
     showReportOverlay(html);
   };
 
-  const exportSalaryCsv = () => {
+  const exportSalaryCsv = async () => {
+    const cw = await freshCarwash();
     const header = ["序號", "姓名", "職務", "工作時數", "時薪單價", "加班時數", "加班時薪", "洗車獎金", "職務加級", "特別獎金", "應發金額", "勞保", "健保", "借支", "實發金額"];
     const body = employees.map((e, i) => {
-      const rec = effectiveRecord(e);
+      const rec = salaryEffectiveRecord(e, salary, punches, year, month, multiplier, overrides, cw);
       const cc = calc(rec);
       return [i + 1, e.name, rec.position || "", num(rec.workHours), num(rec.hourlyRate), num(rec.otHours), num(rec.otRate), num(rec.carWash), num(rec.dutyAllowance), num(rec.specialBonus), cc.gross, num(rec.laborIns), num(rec.healthIns), num(rec.advance), cc.netRounded];
     });
@@ -2494,7 +2500,7 @@ function useCarwash(ym) {
     const f = () => bump((n) => n + 1);
     carwashSubs.add(f);
     setError("");
-    loadCarwash(ym).catch((e) => setError((e && e.message) || "讀取失敗"));
+    loadCarwash(ym, true).catch((e) => setError((e && e.message) || "讀取失敗")); // 每次打開都重讀：洗車表在試算表直接填
     return () => { carwashSubs.delete(f); };
   }, [ym]);
   return { data: carwashCache.get(ym) || null, loaded: carwashCache.has(ym), error };
